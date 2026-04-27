@@ -39,7 +39,9 @@ The agent loop streams Claude's response token by token, splits it into sentence
 
 - **Python 3.11+**
 - **Anthropic API key** — [console.anthropic.com](https://console.anthropic.com)
-- **Tailscale** — for phone access over your local network with a valid TLS cert
+- **Networking** — one of:
+  - **Tailscale** *(recommended)* — peer-to-peer, audio stays on your local network
+  - **Cloudflare Tunnel** *(easier setup)* — install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), audio routes through Cloudflare
 - **ntfy.sh** — optional, for push notifications to your phone when Clio starts
 - A phone with a modern browser (iOS Safari or Android Chrome)
 
@@ -93,9 +95,13 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 Add this to your shell profile (`~/.bashrc` or `~/.zshrc`) to persist it.
 
-### 5. Connect Tailscale
+### 5. Configure networking
 
-Tailscale must be running. `start.sh` will provision a TLS cert for your machine automatically using `tailscale cert`.
+**Option A — Tailscale (recommended):**
+Set `TUNNEL_MODE=tailscale` in `config.sh` and fill in your `TAILSCALE_HOST`. Tailscale must be installed and connected on both your laptop and phone. `start.sh` provisions a TLS cert automatically via `tailscale cert`.
+
+**Option B — Cloudflare Tunnel (easier setup):**
+Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), then set `TUNNEL_MODE=cloudflare` in `config.sh`. No Tailscale or cert setup needed — `start.sh` handles everything. The URL changes on each restart.
 
 ### 6. Start
 

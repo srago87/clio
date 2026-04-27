@@ -1,6 +1,17 @@
-# Your Tailscale hostname — run `tailscale status` to find it
+# Networking mode: "tailscale" (default, recommended) or "cloudflare"
+#
+# tailscale — uses Tailscale for peer-to-peer access. Requires Tailscale installed
+#             on both your laptop and phone. Traffic stays on your local network.
+#
+# cloudflare — uses Cloudflare Tunnel (cloudflared). No Tailscale needed, easier
+#              setup, but audio routes through Cloudflare's servers.
+#
+TUNNEL_MODE="tailscale"
+
+# Your Tailscale hostname — run `tailscale status` to find it.
+# Only required when TUNNEL_MODE=tailscale.
 TAILSCALE_HOST="your-machine.tail12345.ts.net"
 
-# Your ntfy.sh topic for push notifications to your phone (optional)
+# Your ntfy.sh topic for push notifications to your phone (optional).
 # Create a topic at ntfy.sh and paste it here. Leave empty to disable.
 NTFY_TOPIC=""
