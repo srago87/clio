@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Clio</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:ital,wght@0,300;0,400;0,500;0,600;1,300&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <span class="wordmark">Clio</span>
+  </header>
+  <div id="progress-line"><div id="progress-bar"></div></div>
+
+  <div id="speaking-glow"></div>
+  <div id="conversation">
+    <p id="connecting-msg">Connecting to server…</p>
+  </div>
+
+  <!-- Permission overlay -->
+  <div id="permission-overlay">
+    <div id="permission-card">
+      <h2>Permission required</h2>
+      <p id="permission-description"></p>
+      <div class="permission-buttons">
+        <button id="btn-deny">Deny</button>
+        <button id="btn-approve">Approve</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <span id="status-badge" class="idle">Connecting…</span>
+    <button id="mic-btn" class="disabled" title="Tap to start">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor"/>
+        <path d="M5 11a7 7 0 0 0 14 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+        <line x1="12" y1="18" x2="12" y2="22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="8.5" y1="22" x2="15.5" y2="22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

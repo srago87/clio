@@ -1,0 +1,27 @@
+# Personal config — copy config.sh.example to config.sh and fill it in
+config.sh
+
+# Personal Clio files — copy *.example.md versions as starting points
+memory.md
+soul.md
+
+# TLS certificates — generated per machine by start.sh
+clio.crt
+clio.key
+
+# Runtime directories
+.venv/
+laptop/__pycache__/
+laptop/tmp/
+laptop/logs/
+
+# Model files — downloaded separately (see README)
+laptop/models/
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Python
+*.pyc
+*.pyo
+*.pyd

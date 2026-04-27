@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+faster-whisper
+piper-tts
+python-multipart
+aiofiles
+anthropic
+websockets
+requests
+beautifulsoup4
