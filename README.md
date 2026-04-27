@@ -52,7 +52,7 @@ The agent loop streams Claude's response token by token, splits it into sentence
 ### 1. Clone and create a virtual environment
 
 ```bash
-git clone https://github.com/yourusername/clio
+git clone https://github.com/srago87/clio
 cd clio
 python -m venv .venv && source .venv/bin/activate
 pip install -r laptop/requirements.txt
@@ -214,7 +214,7 @@ See [docs/architecture.md](docs/architecture.md) for full technical detail.
 ## Limitations
 
 - **ARM64 Linux only tested** — runs on Apple Silicon Mac and ARM64 Linux. x86 should work but is untested.
-- **Tailscale required** — the TLS cert setup is Tailscale-specific. Contributions welcome for other networking setups.
+- **TLS cert setup is Tailscale-specific** — if using Cloudflare Tunnel, cert provisioning is handled differently. Contributions welcome for other networking setups.
 - **No conversation branching** — conversation history grows linearly with no summarization strategy. Very long sessions will eventually approach context limits.
 - **piper-tts voices** — the default voice (lessac-medium) is clear but robotic. Other voices available at [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices).
 
