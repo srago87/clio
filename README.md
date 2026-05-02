@@ -83,32 +83,39 @@ wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/me
 
 ```bash
 cp config.sh.example config.sh
-```
-
-Edit `config.sh` and fill in your Tailscale hostname and (optionally) your ntfy.sh topic.
-
-```bash
 cp memory.example.md memory.md
 cp soul.example.md soul.md
 ```
 
+`memory.md` is Clio's persistent memory — it reads and updates this file itself across sessions. `soul.md` defines its personality and is loaded into the system prompt every turn. Both are yours to edit.
+
+Edit `config.sh` and set your networking option:
+
+**Option A — Tailscale (recommended):**
+Set `TUNNEL_MODE=tailscale` and fill in your `TAILSCALE_HOST`. Tailscale must be installed and connected on both your laptop and phone. `start.sh` provisions a TLS cert automatically via `tailscale cert`.
+
+**Option B — Cloudflare Tunnel (easier setup):**
+Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), then set `TUNNEL_MODE=cloudflare`. No Tailscale or cert setup needed — `start.sh` handles everything. The URL changes on each restart.
+
+You can also optionally set an ntfy.sh topic in `config.sh` to receive a push notification on your phone when Clio starts.
+
 ### 4. Set your API key
+
+Get your API key from [console.anthropic.com](https://console.anthropic.com) → API Keys → Create Key. Copy the key — it's only shown once.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Add this to your shell profile (`~/.bashrc` or `~/.zshrc`) to persist it.
+To persist it across terminal sessions, add it to your shell profile. Replace `sk-ant-...` with your actual key:
 
-### 5. Configure networking
+```bash
+echo 'export ANTHROPIC_API_KEY=sk-ant-...' >> ~/.bashrc && source ~/.bashrc
+```
 
-**Option A — Tailscale (recommended):**
-Set `TUNNEL_MODE=tailscale` in `config.sh` and fill in your `TAILSCALE_HOST`. Tailscale must be installed and connected on both your laptop and phone. `start.sh` provisions a TLS cert automatically via `tailscale cert`.
+If you're using zsh (default on macOS), use `~/.zshrc` instead of `~/.bashrc`.
 
-**Option B — Cloudflare Tunnel (easier setup):**
-Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), then set `TUNNEL_MODE=cloudflare` in `config.sh`. No Tailscale or cert setup needed — `start.sh` handles everything. The URL changes on each restart.
-
-### 6. Start
+### 5. Start
 
 ```bash
 ./start.sh
@@ -136,7 +143,7 @@ Open the URL in your phone's browser. On first visit, accept the TLS certificate
 Edit `soul.md` to change how Clio speaks and behaves. It's loaded into the system prompt every turn. The example file is a good starting point.
 
 ### Memory (`memory.md`)
-Clio reads `memory.md` at the start of every turn and updates it herself via the `update_memory` tool. Edit it directly to give Clio context about you and your projects.
+Clio reads `memory.md` at the start of every turn and updates it via the `update_memory` tool. Edit it directly to give Clio context about you and your projects.
 
 ### Tools
 Tools are defined in `laptop/tools.py`. Add new tools by:
