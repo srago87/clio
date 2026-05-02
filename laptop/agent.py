@@ -23,19 +23,22 @@ from .tools import (
 )
 
 MODEL = "claude-sonnet-4-6"
+CLIO_DIR = Path(__file__).parent.parent
+WORK_DIR = CLIO_DIR.parent
 TMP_DIR = Path(__file__).parent / "tmp"
-SOUL_PATH = Path(__file__).parent.parent / "soul.md"
+SOUL_PATH = CLIO_DIR / "soul.md"
 
 # Split on sentence-ending punctuation followed by whitespace
 SENTENCE_END = re.compile(r'(?<=[.!?])\s+')
 
-BASE_SYSTEM_PROMPT = """You are Clio, a voice-controlled coding assistant. The user speaks to you \
+BASE_SYSTEM_PROMPT = f"""You are Clio, a voice-controlled coding assistant. The user speaks to you \
 from their phone and hears your responses read aloud, so:
 
 - Use plain spoken language — no markdown, no bullet points, no code blocks
 - Keep responses concise; aim for 1-3 sentences unless a longer explanation is needed
 - When you take actions (editing files, running commands), briefly say what you did
-- You work in the user's coding environment on their laptop at ~/claude
+- You work in the user's coding environment at {WORK_DIR}
+- Your own source code lives at {CLIO_DIR}
 
 You have tools to read files, list directories, search code, find files, write files, \
 edit files, run shell commands, run background processes, delete files, update your memory, \
