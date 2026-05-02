@@ -23,7 +23,7 @@ echo "────────────────────────�
 
 step "Python virtual environment"
 
-if [ ! -d ".venv" ]; then
+if [ ! -f ".venv/bin/activate" ]; then
   if ! python3 -m venv --help &>/dev/null; then
     warn "python3-venv not found — attempting to install..."
     if command -v apt-get &>/dev/null; then
