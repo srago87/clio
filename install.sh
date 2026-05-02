@@ -27,6 +27,7 @@ if [ ! -d ".venv" ]; then
   if ! python3 -m venv --help &>/dev/null; then
     warn "python3-venv not found — attempting to install..."
     if command -v apt-get &>/dev/null; then
+      sudo add-apt-repository -y universe
       sudo apt-get update -q && sudo apt-get install -y python3-venv
     else
       err "Could not install python3-venv automatically. Install it manually and re-run."
