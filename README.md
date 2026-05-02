@@ -49,6 +49,18 @@ The agent loop streams Claude's response token by token, splits it into sentence
 
 ## Setup
 
+### Guided install (recommended)
+
+```bash
+git clone https://github.com/srago87/clio
+cd clio
+./install.sh
+```
+
+The installer walks through each step interactively: dependencies, model download, networking, API key, and optional push notifications.
+
+### Manual install
+
 ### 1. Clone and create a virtual environment
 
 On Debian/Ubuntu, install the venv package first:
@@ -91,11 +103,11 @@ cp soul.example.md soul.md
 
 Edit `config.sh` and set your networking option:
 
-**Option A — Tailscale (recommended):**
-Set `TUNNEL_MODE=tailscale` and fill in your `TAILSCALE_HOST`. Tailscale must be installed and connected on both your laptop and phone. `start.sh` provisions a TLS cert automatically via `tailscale cert`.
+**Option A — Tailscale (for real use):**
+Set `TUNNEL_MODE=tailscale` and fill in your `TAILSCALE_HOST`. Tailscale must be installed and connected on both your laptop and phone. `start.sh` provisions a TLS cert automatically via `tailscale cert`. This gives you a stable URL, a working PWA, and keeps your audio traffic on your local network. This is the only option that works well for repeated daily use.
 
-**Option B — Cloudflare Tunnel (easier setup):**
-Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), then set `TUNNEL_MODE=cloudflare`. No Tailscale or cert setup needed — `start.sh` handles everything. The URL changes on each restart.
+**Option B — Cloudflare Tunnel (just trying it out):**
+Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), then set `TUNNEL_MODE=cloudflare`. No Tailscale or cert setup needed — good for a quick test without committing to Tailscale. The URL changes on each restart, so PWA installation won't persist and you'll need to open a new URL in the browser every time you start Clio.
 
 You can also optionally set an ntfy.sh topic in `config.sh` to receive a push notification on your phone when Clio starts.
 
