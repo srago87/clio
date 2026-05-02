@@ -16,7 +16,8 @@ laptop/tmp/
 laptop/logs/
 
 # Model files — downloaded separately (see README)
-laptop/models/
+laptop/models/*
+!laptop/models/.gitkeep
 
 # Claude Code local settings
 .claude/settings.local.json

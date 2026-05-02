@@ -51,10 +51,16 @@ The agent loop streams Claude's response token by token, splits it into sentence
 
 ### 1. Clone and create a virtual environment
 
+On Debian/Ubuntu, install the venv package first:
+```bash
+sudo apt update && sudo apt install python3-venv
+```
+
+Then clone and set up:
 ```bash
 git clone https://github.com/srago87/clio
 cd clio
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r laptop/requirements.txt
 ```
 
@@ -68,7 +74,6 @@ pip install -r laptop/requirements.txt
 
 **Piper (text-to-speech):**
 ```bash
-mkdir -p laptop/models
 cd laptop/models
 wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
 wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
