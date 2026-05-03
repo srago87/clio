@@ -154,6 +154,11 @@ done
 if [ -n "$api_key" ]; then
   export ANTHROPIC_API_KEY="$api_key"
 
+  # Always write to config.sh so start.sh picks it up regardless of shell state
+  grep -v "^export ANTHROPIC_API_KEY=" "$CONFIG" > "$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
+  echo "export ANTHROPIC_API_KEY=\"$api_key\"" >> "$CONFIG"
+  ok "API key saved to config.sh"
+
   if [ -f "$HOME/.zshrc" ]; then
     PROFILE="$HOME/.zshrc"
   else
@@ -161,13 +166,11 @@ if [ -n "$api_key" ]; then
   fi
 
   echo ""
-  read -rp "  Add to $PROFILE to persist across sessions? [Y/n]: " persist
+  read -rp "  Also add to $PROFILE for use in other terminals? [Y/n]: " persist
   if [[ ! "$persist" =~ ^[Nn] ]]; then
     grep -v "^export ANTHROPIC_API_KEY=" "$PROFILE" > "$PROFILE.tmp" 2>/dev/null && mv "$PROFILE.tmp" "$PROFILE" || true
     echo "export ANTHROPIC_API_KEY=\"$api_key\"" >> "$PROFILE"
-    ok "API key saved to $PROFILE"
-  else
-    warn "API key set for this session only"
+    ok "API key also saved to $PROFILE"
   fi
 fi
 

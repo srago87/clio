@@ -12,6 +12,10 @@ TUNNEL_MODE="tailscale"
 # Only required when TUNNEL_MODE=tailscale.
 TAILSCALE_HOST="your-machine.tail12345.ts.net"
 
+# Your Anthropic API key — get one at https://console.anthropic.com → API Keys
+# The installer sets this automatically. You can also set it here manually.
+export ANTHROPIC_API_KEY=""
+
 # Your ntfy.sh topic for push notifications to your phone (optional).
 # Create a topic at ntfy.sh and paste it here. Leave empty to disable.
 NTFY_TOPIC=""
