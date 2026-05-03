@@ -155,8 +155,9 @@ if [ -n "$api_key" ]; then
   export ANTHROPIC_API_KEY="$api_key"
 
   # Always write to config.sh so start.sh picks it up regardless of shell state
-  grep -v "^export ANTHROPIC_API_KEY=" "$CONFIG" > "$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
-  echo "export ANTHROPIC_API_KEY=\"$api_key\"" >> "$CONFIG"
+  CONFIG_FILE="$SCRIPT_DIR/config.sh"
+  grep -v "^export ANTHROPIC_API_KEY=" "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+  echo "export ANTHROPIC_API_KEY=\"$api_key\"" >> "$CONFIG_FILE"
   ok "API key saved to config.sh"
 
   if [ -f "$HOME/.zshrc" ]; then
