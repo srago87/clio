@@ -7,6 +7,16 @@ from datetime import datetime
 from pathlib import Path
 
 from .jobs import job_manager
+from .browser import (
+    browser_open as _browser_open,
+    browser_navigate as _browser_navigate,
+    browser_click as _browser_click,
+    browser_type as _browser_type,
+    browser_screenshot as _browser_screenshot,
+    browser_get_content as _browser_get_content,
+    browser_get_elements as _browser_get_elements,
+    browser_close as _browser_close,
+)
 
 MEMORY_PATH = Path(__file__).parent.parent / "memory.md"
 
@@ -16,10 +26,13 @@ AUTO_APPROVE = {
     "update_memory", "restart_server", "update_scratchpad",
     "web_search", "get_current_time", "read_url", "close_connection",
     "check_job", "stop_job", "list_jobs",
+    "browser_get_content", "browser_get_elements", "browser_screenshot",
+    "browser_navigate", "browser_open",
 }
 
 # Tools that require phone approval before running
-REQUIRE_APPROVAL = {"bash_command", "write_file", "edit_file", "delete_file", "run_background"}
+REQUIRE_APPROVAL = {"bash_command", "write_file", "edit_file", "delete_file", "run_background",
+                    "browser_open", "browser_navigate", "browser_click", "browser_type", "browser_close"}
 
 TOOL_DEFINITIONS = [
     {
@@ -261,6 +274,106 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "browser_open",
+        "description": (
+            "Open a new browser session. Optionally navigate to a URL on open. "
+            "Use headless=true for background tasks, headless=false to show the browser visually on the server display."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Optional URL to navigate to after opening."},
+                "headless": {"type": "boolean", "description": "Run headless (no visible window). Defaults to true."},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "browser_navigate",
+        "description": "Navigate the current browser page to a URL.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "The URL to navigate to."},
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "browser_click",
+        "description": (
+            "Click an element on the current page. "
+            "Selector can be a CSS selector, XPath, or visible text/label of the element."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "selector": {"type": "string", "description": "CSS selector, XPath, or visible text of the element to click."},
+            },
+            "required": ["selector"],
+        },
+    },
+    {
+        "name": "browser_type",
+        "description": (
+            "Type text into an input field on the current page. "
+            "Selector can be a CSS selector, placeholder text, or field label."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "selector": {"type": "string", "description": "CSS selector, placeholder, or label of the input field."},
+                "text": {"type": "string", "description": "Text to type into the field."},
+            },
+            "required": ["selector", "text"],
+        },
+    },
+    {
+        "name": "browser_screenshot",
+        "description": (
+            "Take a screenshot of the current browser page and return it as an image "
+            "so you can visually analyze what is on the screen."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "browser_get_content",
+        "description": (
+            "Get the readable text content of the current browser page — stripped of HTML noise. "
+            "Use this to read articles, search results, documentation, etc."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "browser_get_elements",
+        "description": (
+            "List the interactive elements on the current page: buttons, links, and input fields. "
+            "Use this to understand what actions are available before clicking or typing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "browser_close",
+        "description": "Close the current browser session.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
         "name": "close_connection",
         "description": (
             "Close the WebSocket connection to the phone client. Use this to test that "
@@ -298,6 +411,22 @@ def execute_tool(name: str, inputs: dict) -> str:
             return job_manager.list_jobs()
         elif name == "delete_file":
             return _delete_file(inputs["path"])
+        elif name == "browser_open":
+            return _browser_open(inputs.get("url", ""), inputs.get("headless", True))
+        elif name == "browser_navigate":
+            return _browser_navigate(inputs["url"])
+        elif name == "browser_click":
+            return _browser_click(inputs["selector"])
+        elif name == "browser_type":
+            return _browser_type(inputs["selector"], inputs["text"])
+        elif name == "browser_screenshot":
+            return _browser_screenshot()
+        elif name == "browser_get_content":
+            return _browser_get_content()
+        elif name == "browser_get_elements":
+            return _browser_get_elements()
+        elif name == "browser_close":
+            return _browser_close()
         elif name == "get_current_time":
             return _get_current_time()
         elif name == "web_search":
@@ -359,12 +488,32 @@ def describe_tool_call(name: str, inputs: dict) -> str:
         return "restart server"
     elif name == "update_scratchpad":
         return "update scratchpad"
+    elif name == "browser_open":
+        url = inputs.get("url", "")
+        mode = "headless" if inputs.get("headless", True) else "visible"
+        return f"open browser ({mode})" + (f" → {url}" if url else "")
+    elif name == "browser_navigate":
+        return f"navigate to {inputs['url']}"
+    elif name == "browser_click":
+        return f"click \"{inputs['selector']}\""
+    elif name == "browser_type":
+        return f"type into \"{inputs['selector']}\""
+    elif name == "browser_screenshot":
+        return "take screenshot"
+    elif name == "browser_get_content":
+        return "get page content"
+    elif name == "browser_get_elements":
+        return "get page elements"
+    elif name == "browser_close":
+        return "close browser"
     elif name == "close_connection":
         return "close connection"
     return name
 
 
-def summarize_tool_result(name: str, result: str) -> str:
+def summarize_tool_result(name: str, result) -> str:
+    if isinstance(result, dict):
+        return "Screenshot taken"
     if result.startswith("Error:"):
         return result[:80]
     if name == "read_file":
@@ -414,6 +563,24 @@ def summarize_tool_result(name: str, result: str) -> str:
         return "Restarting..."
     elif name == "update_scratchpad":
         return "Scratchpad updated"
+    elif name == "browser_open":
+        return result
+    elif name == "browser_navigate":
+        return result[:80]
+    elif name == "browser_click":
+        return result[:80]
+    elif name == "browser_type":
+        return result[:80]
+    elif name == "browser_screenshot":
+        return "Screenshot taken"
+    elif name == "browser_get_content":
+        lines = result.strip().split("\n")
+        return f"Got {len(lines)} lines"
+    elif name == "browser_get_elements":
+        lines = result.strip().split("\n") if result.strip() else []
+        return f"Found {len(lines)} elements"
+    elif name == "browser_close":
+        return result
     elif name == "close_connection":
         return "Connection closed"
     return "Done"

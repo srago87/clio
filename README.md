@@ -9,7 +9,7 @@ A voice-controlled coding assistant you talk to from your phone. Speak a request
 ## What it does
 
 - **Voice in, voice out** — speak from your phone, hear responses in real time via streaming TTS
-- **Real tool use** — reads, writes, and edits files; runs shell commands; searches the web; manages background processes; fetches URLs
+- **Real tool use** — reads, writes, and edits files; runs shell commands; searches the web; manages background processes; fetches URLs; controls a browser
 - **Phone-side approval** — destructive actions (writing files, running commands) require a tap to approve before executing
 - **Mic mute toggle** — tap the mic button to mute; the OS mic indicator light goes off and Clio stays quiet until you unmute
 - **Live status badge** — shows what Clio is doing with a label and elapsed timer (e.g. "read agent.py (3s)")
@@ -162,6 +162,8 @@ Tap the mic button any time after setup to toggle mute. When muted:
 - The session glow clears
 - Clio won't listen or respond until you unmute
 
+If you mute while Clio is speaking, mic teardown is deferred until playback finishes to avoid suspending the AudioContext on iOS.
+
 Tap again to unmute and resume.
 
 ---
@@ -201,11 +203,19 @@ Tools are defined in `laptop/tools.py`. Add new tools by:
 | `check_job` | Auto | Read output from a background job |
 | `stop_job` | Auto | Kill a background job |
 | `list_jobs` | Auto | List all background jobs |
+| `browser_open` | Auto | Open a browser session (headless or visible) |
+| `browser_navigate` | Auto | Navigate to a URL |
+| `browser_screenshot` | Auto | Take a screenshot and analyze it visually |
+| `browser_get_content` | Auto | Get readable text content of the current page |
+| `browser_get_elements` | Auto | List interactive elements on the current page |
 | `write_file` | Phone approval | Create or overwrite a file |
 | `edit_file` | Phone approval | Replace a string in a file |
 | `bash_command` | Phone approval | Run a shell command |
 | `run_background` | Phone approval | Start a long-running process |
 | `delete_file` | Phone approval | Delete a file |
+| `browser_click` | Phone approval | Click an element on the current page |
+| `browser_type` | Phone approval | Type into an input field |
+| `browser_close` | Phone approval | Close the browser session |
 
 ---
 
@@ -217,6 +227,7 @@ clio/
 │   ├── main.py         # FastAPI app, WebSocket endpoint, logging setup
 │   ├── agent.py        # AgentSession: STT → Claude agent loop → TTS
 │   ├── tools.py        # Tool definitions and execution
+│   ├── browser.py      # Playwright browser automation wrapper
 │   ├── jobs.py         # Background process manager
 │   ├── stt.py          # faster-whisper wrapper (VAD, hallucination filtering)
 │   ├── tts.py          # piper-tts wrapper

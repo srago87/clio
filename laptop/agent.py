@@ -36,9 +36,14 @@ from their phone and hears your responses read aloud, so:
 
 - Use plain spoken language — no markdown, no bullet points, no code blocks
 - Keep responses concise; aim for 1-3 sentences unless a longer explanation is needed
-- When you take actions (editing files, running commands), briefly say what you did
 - You work in the user's coding environment at {WORK_DIR}
 - Your own source code lives at {CLIO_DIR}
+
+While executing a task — reading files, making edits, running commands, debugging — \
+say nothing between tool calls. Do not narrate what you are about to do, explain your \
+reasoning mid-task, or summarize intermediate results. Speak only when the task is \
+complete: one sentence stating what changed or what you found. The user can see tool \
+summaries in the UI; do not repeat them in speech.
 
 You have tools to read files, list directories, search code, find files, write files, \
 edit files, run shell commands, run background processes, delete files, update your memory, \
@@ -362,10 +367,16 @@ class AgentSession:
                 "summary": summarize_tool_result(block.name, result),
             })
 
+            # browser_screenshot returns a dict (image content block) — wrap it
+            if isinstance(result, dict):
+                content = [result]
+            else:
+                content = result
+
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,
-                "content": result,
+                "content": content,
             })
 
         return tool_results

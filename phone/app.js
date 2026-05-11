@@ -337,8 +337,12 @@ function finishTurn() {
   currentClaudeBubble = null;
   turnEnded = false;
   playbackAnalyser = null;
-  speakingGlow.classList.add("session");
   setStatus("idle", "");
+  if (micMuted) {
+    stopMicTracks();  // deferred from mute-during-speaking
+  } else {
+    speakingGlow.classList.add("session");
+  }
 }
 
 function resetTurnState() {
@@ -391,20 +395,28 @@ micBtn.onclick = async () => {
     setStatus("idle", "");
     return;
   }
+  // Immediately resume AudioContext in case iOS suspended it on tap
+  if (audioContext.state === "suspended") await audioContext.resume();
   // Toggle mute
   micMuted = !micMuted;
   if (micMuted) {
     micBtn.classList.add("muted");
     speakingGlow.classList.remove("session");
     setStatus("idle", "");
-    // Stop mic tracks so the OS indicator light goes off
-    stopMicTracks();
+    // If Clio is speaking, defer mic teardown to finishTurn() — stopping the
+    // mic stream mid-playback can suspend the AudioContext on mobile.
+    if (!processingExchange) {
+      stopMicTracks();
+    }
   } else {
     pendingChunks = [];  // discard audio recorded while muted
     micBtn.classList.remove("muted");
     speakingGlow.classList.add("session");
-    // Restart mic tracks
-    await restartMicTracks();
+    // Only restart mic if it was actually stopped. If mute happened mid-speaking,
+    // the mic stream is still alive — just let checkAudioLevel resume normally.
+    if (!audioStream) {
+      await restartMicTracks();
+    }
   }
 };
 
@@ -501,6 +513,13 @@ async function setupMic() {
     });
     audioContext = new AudioContext();
     await audioContext.resume();
+
+    // Auto-resume AudioContext if iOS suspends it (e.g. on UI tap while audio is playing)
+    audioContext.onstatechange = () => {
+      if (audioContext && audioContext.state === "suspended") {
+        audioContext.resume().catch(() => {});
+      }
+    };
 
     // Play a silent 1-frame buffer so iOS considers the AudioContext "active"
     // before any real audio arrives — prevents onended from silently failing

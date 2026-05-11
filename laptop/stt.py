@@ -1,3 +1,4 @@
+# stt.py — speech-to-text using faster-whisper
 from pathlib import Path
 from faster_whisper import WhisperModel
 
