@@ -65,7 +65,8 @@ All messages are JSON.
 | `thinking` | Waiting for Claude API response |
 | `executing` | Running a tool |
 | `waiting_permission` | Waiting for phone approval |
-| `speaking` | Sending audio chunks |
+
+Note: there is no `speaking` state sent to the phone — the user can already hear it. The status badge hides when idle and while muted.
 
 ---
 
@@ -105,7 +106,7 @@ Tools fall into two categories:
 1. Agent calls `_ask_permission(tool_call_id, tool, description)`
 2. Backend sends `permission_request` over WebSocket
 3. Phone shows overlay card, speaks the request via `SpeechSynthesis`
-4. User taps Approve or Deny (Deny is listed first)
+4. User taps Approve or Deny (Approve is listed first, on the right)
 5. Phone sends `permission_response`
 6. Agent resumes with result
 
@@ -139,9 +140,9 @@ Uses faster-whisper with the `base` model by default. Key settings:
 | `beam_size` | 1 | Speed over accuracy |
 | `vad_filter` | True | Strip silence before transcription |
 | `condition_on_previous_text` | False | Reduce hallucinations |
-| `NO_SPEECH_THRESHOLD` | 0.6 | Discard segments Whisper is uncertain about |
+| `NO_SPEECH_THRESHOLD` | 0.75 | Discard segments Whisper is uncertain about |
 
-Post-processing: strips hallucinated leading "Hello" phrases; applies a name substitution for common mishearings.
+Post-processing: strips hallucinated leading "Hello" and "Hello? Yes" phrases; strips leading punctuation artifacts; applies a name substitution for common mishearings (e.g. "Cleo" → "Clio"); re-capitalizes the first letter of whatever remains.
 
 ---
 
@@ -170,9 +171,21 @@ Web Audio API `AnalyserNode` polls RMS level every 80ms.
 
 - Each `audio_chunk` message triggers a fetch of the WAV URL
 - Chunks are queued and played back-to-back via Web Audio API
-- Audio is routed through an `AnalyserNode` that drives a speaking glow animation
+- Audio is routed through an `AnalyserNode` that drives a live amplitude-driven glow animation using `requestAnimationFrame`
 - `turn_end` signals no more chunks; mic re-enables after the queue drains
 - iOS safety net: each chunk has a `duration + 800ms` timeout fallback for silent `onended`
+
+---
+
+## Mic mute (phone-side)
+
+Tapping the mic button after initial setup toggles mute. When muted:
+
+- `stopMicTracks()` disconnects the `MediaStreamSource` node and stops all tracks — this turns off the OS mic indicator light
+- The `levelCheckInterval` is cleared so VAD stops polling
+- The session glow and status badge are cleared
+
+On unmute, `restartMicTracks()` calls `getUserMedia` again, rebuilds the mic pipeline, and resumes the VAD loop — without recreating the `AudioContext`.
 
 ---
 

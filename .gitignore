@@ -9,6 +9,10 @@ soul.md
 clio.crt
 clio.key
 
+# Log files
+server.log
+server.log.1
+
 # Runtime directories
 .venv/
 laptop/__pycache__/

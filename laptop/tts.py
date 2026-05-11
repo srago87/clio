@@ -20,6 +20,9 @@ def get_voice() -> PiperVoice:
 
 def synthesize(text: str, output_path: str) -> None:
     import wave
+    import time
     voice = get_voice()
+    t0 = time.time()
     with wave.open(output_path, "w") as wav_file:
         voice.synthesize_wav(text, wav_file)
+    print(f"[tts] synthesized {len(text)} chars in {(time.time()-t0)*1000:.0f}ms")

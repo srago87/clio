@@ -191,7 +191,8 @@ footer {
   padding: 14px 24px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
+  position: relative;
   border-top: 1px solid rgba(0, 229, 255, 0.08);
   flex-shrink: 0;
 }
@@ -208,12 +209,18 @@ footer {
   border: 1px solid var(--text-muted);
   color: var(--text-muted);
   background: transparent;
-  transition: all 0.2s;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+  position: absolute;
+  left: 24px;
+}
+
+#status-badge.hidden {
+  display: none;
 }
 
 #status-badge.idle         { border-color: var(--text-muted); color: var(--text-muted); }
 #status-badge.connected    { border-color: var(--cyan-dim);   color: var(--cyan-mid); }
-#status-badge.listening    { border-color: var(--cyan-dim);   color: var(--cyan-mid);  background: rgba(0,229,255,0.04); }
+
 #status-badge.transcribing { border-color: var(--amber);      color: var(--amber); }
 #status-badge.thinking     { border-color: var(--amber);      color: var(--amber); }
 #status-badge.executing    { border-color: var(--orange);     color: var(--orange); }
@@ -253,6 +260,8 @@ footer {
 /* ── Mic button ────────────────────────────────────────────────────────── */
 
 #mic-btn {
+  position: absolute;
+  right: 24px;
   width: 60px;
   height: 60px;
   border-radius: 50%;
@@ -280,6 +289,15 @@ footer {
 #mic-btn.disabled {
   opacity: 0.25;
   cursor: not-allowed;
+}
+
+#mic-btn.muted {
+  border-color: var(--text-muted);
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+  animation: none;
+  opacity: 0.6;
 }
 
 @keyframes pulse-mic {

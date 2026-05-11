@@ -9,8 +9,11 @@ A voice-controlled coding assistant you talk to from your phone. Speak a request
 ## What it does
 
 - **Voice in, voice out** — speak from your phone, hear responses in real time via streaming TTS
-- **Real tool use** — reads, writes, and edits files; runs shell commands; searches the web; manages background processes
+- **Real tool use** — reads, writes, and edits files; runs shell commands; searches the web; manages background processes; fetches URLs
 - **Phone-side approval** — destructive actions (writing files, running commands) require a tap to approve before executing
+- **Mic mute toggle** — tap the mic button to mute; the OS mic indicator light goes off and Clio stays quiet until you unmute
+- **Live status badge** — shows what Clio is doing with a label and elapsed timer (e.g. "read agent.py (3s)")
+- **Amplitude-driven glow** — the speaking glow pulses in real time with the audio amplitude during playback
 - **Persistent memory** — Clio maintains a memory file across sessions and a per-session scratchpad
 - **Customizable personality** — edit `soul.md` to change how Clio thinks and speaks
 - **PWA** — installable on your phone's home screen, works over your local network via Tailscale
@@ -31,7 +34,7 @@ FastAPI Backend (laptop)
 Tailscale → laptop:8765 (HTTPS/WSS via Tailscale cert)
 ```
 
-The agent loop streams Claude's response token by token, splits it into sentences, and synthesizes + sends each sentence to the phone as it completes — so audio starts playing within a second or two of Claude beginning to respond.
+The agent loop streams Claude's response token by token, splits it into sentences, and synthesizes + sends each sentence to the phone as it completes — so audio starts playing within a couple of seconds of Claude beginning to respond.
 
 ---
 
@@ -147,6 +150,20 @@ Open the URL in your phone's browser. On first visit, accept the TLS certificate
 - iOS: Safari → Share → Add to Home Screen
 - Android: browser menu → Install App
 
+Once installed, tap the mic button to begin. Clio listens for speech, detects a pause (~1 second of quiet), and sends the clip automatically — no button to hold.
+
+---
+
+## Mic mute
+
+Tap the mic button any time after setup to toggle mute. When muted:
+
+- The mic tracks are fully stopped, so the OS mic indicator light goes off
+- The session glow clears
+- Clio won't listen or respond until you unmute
+
+Tap again to unmute and resume.
+
 ---
 
 ## Customization
@@ -180,6 +197,7 @@ Tools are defined in `laptop/tools.py`. Add new tools by:
 | `update_memory` | Auto | Overwrite `memory.md` |
 | `update_scratchpad` | Auto | Update session working notes |
 | `restart_server` | Auto | Restart the Clio process |
+| `close_connection` | Auto | Drop the WebSocket so the client reconnects |
 | `check_job` | Auto | Read output from a background job |
 | `stop_job` | Auto | Kill a background job |
 | `list_jobs` | Auto | List all background jobs |
@@ -196,25 +214,29 @@ Tools are defined in `laptop/tools.py`. Add new tools by:
 ```
 clio/
 ├── laptop/
-│   ├── main.py         # FastAPI app, WebSocket endpoint
+│   ├── main.py         # FastAPI app, WebSocket endpoint, logging setup
 │   ├── agent.py        # AgentSession: STT → Claude agent loop → TTS
 │   ├── tools.py        # Tool definitions and execution
 │   ├── jobs.py         # Background process manager
-│   ├── stt.py          # faster-whisper wrapper
+│   ├── stt.py          # faster-whisper wrapper (VAD, hallucination filtering)
 │   ├── tts.py          # piper-tts wrapper
 │   ├── session.py      # Per-connection session log
 │   └── requirements.txt
 ├── phone/
 │   ├── index.html      # Mobile PWA shell
-│   ├── app.js          # WebSocket client, silence detection, audio playback
+│   ├── app.js          # WebSocket client, VAD, streaming audio playback, glow animation
 │   ├── style.css
 │   ├── manifest.json
+│   ├── icon.svg        # PWA icon (cyan waveform on dark background)
+│   ├── icon-192.png
+│   ├── icon-512.png
 │   └── sw.js           # Service worker
 ├── soul.example.md     # Clio's personality — copy to soul.md and customize
 ├── memory.example.md   # Clio's memory template — copy to memory.md
 ├── config.sh.example   # Config template — copy to config.sh and fill in
 ├── start.sh            # Start the server
-└── restart.sh          # Restart a running instance
+├── restart.sh          # Restart a running instance
+└── server.log          # Rotating log file (1MB cap) — timing and debug output
 ```
 
 ---
@@ -223,15 +245,28 @@ clio/
 
 1. Phone records audio until silence is detected (~1s of quiet)
 2. Audio clip (WebM) is sent over WebSocket as base64
-3. Backend transcribes with faster-whisper
+3. Backend transcribes with faster-whisper; hallucinated phrases are filtered out
 4. Transcript is added to conversation history and sent to Claude API with streaming enabled
 5. Text tokens are split into sentences as they stream
 6. Each sentence is synthesized by piper-tts and sent to the phone immediately
-7. Phone plays audio chunks back-to-back as they arrive
+7. Phone plays audio chunks back-to-back as they arrive, with an amplitude-driven glow
 8. If Claude requests a tool, the stream pauses, the tool executes, and the loop continues
 9. Destructive tools pause and send a `permission_request` to the phone before executing
 
 See [docs/architecture.md](docs/architecture.md) for full technical detail.
+
+---
+
+## Logging
+
+Clio logs timing and debug output to `server.log` (rotating, 1MB cap). Third-party library noise is suppressed — only Clio's own markers appear. You can read it directly to diagnose latency or errors.
+
+Typical latency breakdown:
+- **Whisper transcription:** 750ms–1.7s
+- **Claude API (time to first sentence):** 1.3s–3.7s
+- **TTS synthesis per sentence:** 40–270ms
+
+Total perceived latency is roughly 2–5 seconds end-to-end.
 
 ---
 

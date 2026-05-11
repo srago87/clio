@@ -1,5 +1,8 @@
 import asyncio
 import base64
+import logging
+import logging.handlers
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -8,6 +11,31 @@ from fastapi.staticfiles import StaticFiles
 
 from .agent import AgentSession, TMP_DIR
 from .session import VoiceSession
+
+# Set root logger to WARNING — silences all third-party noise (httpx, httpcore, anthropic, faster_whisper, etc.)
+logging.getLogger().setLevel(logging.WARNING)
+
+# Our own logger for clio output — INFO level, goes to file + stdout
+_LOG_PATH = Path(__file__).parent.parent / "server.log"
+_log_handler = logging.handlers.RotatingFileHandler(
+    _LOG_PATH, maxBytes=1_000_000, backupCount=1
+)
+_log_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+_clio_logger = logging.getLogger("clio")
+_clio_logger.setLevel(logging.INFO)
+_clio_logger.propagate = False
+_clio_logger.addHandler(_log_handler)
+_clio_logger.addHandler(logging.StreamHandler(sys.stdout))
+
+# Route print() calls through the clio logger so they go to file + stdout
+class _PrintToLog:
+    def write(self, msg):
+        if msg.strip():
+            _clio_logger.info(msg.rstrip())
+    def flush(self):
+        pass
+
+sys.stdout = _PrintToLog()
 
 app = FastAPI()
 

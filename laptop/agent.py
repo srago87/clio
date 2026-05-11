@@ -213,12 +213,19 @@ class AgentSession:
             turn_text = ""
             sentence_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
 
+            stream_start = time.time()
+            first_sentence_logged = False
+
             async def synthesis_worker():
                 """Drain sentence queue concurrently with token streaming."""
+                nonlocal first_sentence_logged
                 while True:
                     sentence = await sentence_queue.get()
                     if sentence is None:
                         break
+                    if not first_sentence_logged:
+                        first_sentence_logged = True
+                        print(f"[agent] time to first sentence: {(time.time()-stream_start)*1000:.0f}ms")
                     await self._send_audio_chunk(sentence)
 
             worker = asyncio.create_task(synthesis_worker())

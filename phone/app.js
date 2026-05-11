@@ -10,6 +10,7 @@ let mediaRecorder = null;
 let audioStream = null;
 let audioContext = null;
 let analyser = null;
+let micSourceNode = null;
 let isSpeaking = false;
 let speechStartTime = null;
 let silenceTimer = null;
@@ -36,6 +37,9 @@ let glowRafId = null;
 // Track whether the user has set up the mic at least once
 let micWasSetup = false;
 
+// Track mute state
+let micMuted = false;
+
 // ── DOM ───────────────────────────────────────────────────────────────────
 const statusBadge      = document.getElementById("status-badge");
 const conversation     = document.getElementById("conversation");
@@ -58,7 +62,6 @@ function connect() {
     micBtn.classList.remove("disabled");
     if (micWasSetup) {
       // Mic pipeline is still live — just resume listening
-      setStatus("listening", "Listening…");
       startListening();
     } else {
       setStatus("connected", "Tap mic to start");
@@ -112,12 +115,14 @@ function handleServerMessage(msg) {
 
 // ── Status ────────────────────────────────────────────────────────────────
 function handleStatus(state, label) {
+  // Never show a "speaking" status — the user can hear it
+  if (state === "speaking") return;
+
   const defaultLabels = {
     transcribing:       "Transcribing…",
     thinking:           "Thinking…",
     executing:          "Running…",
     waiting_permission: "Waiting…",
-    speaking:           "Speaking…",
   };
   const displayLabel = label || defaultLabels[state] || state;
 
@@ -130,7 +135,7 @@ function handleStatus(state, label) {
   } else {
     stopStatusTimer();
     setStatus(state, displayLabel);
-    if (state !== "speaking") stopWave();
+    stopWave();
   }
 }
 
@@ -162,8 +167,12 @@ function stopStatusTimer() {
 }
 
 function setStatus(cls, label) {
-  statusBadge.className = cls;
   statusBadge.textContent = label;
+  if (label) {
+    statusBadge.className = cls;
+  } else {
+    statusBadge.className = "hidden";
+  }
 }
 
 // ── Progress line ─────────────────────────────────────────────────────────
@@ -273,7 +282,6 @@ async function playNextChunk() {
   }
 
   audioIsPlaying = true;
-  setStatus("speaking", "Speaking…");
   stopWave();
   const url = audioQueue.shift();
 
@@ -324,12 +332,13 @@ function finishTurn() {
   stopWave();
   stopSpeakingGlow();
   stopStatusTimer();
-  setStatus("listening", "Listening…");
   processingExchange = false;
   micBtn.classList.remove("disabled");
   currentClaudeBubble = null;
   turnEnded = false;
   playbackAnalyser = null;
+  speakingGlow.classList.add("session");
+  setStatus("idle", "");
 }
 
 function resetTurnState() {
@@ -379,8 +388,85 @@ btnDeny.onclick    = () => resolvePermission(false);
 micBtn.onclick = async () => {
   if (!audioContext) {
     await setupMic();
+    setStatus("idle", "");
+    return;
+  }
+  // Toggle mute
+  micMuted = !micMuted;
+  if (micMuted) {
+    micBtn.classList.add("muted");
+    speakingGlow.classList.remove("session");
+    setStatus("idle", "");
+    // Stop mic tracks so the OS indicator light goes off
+    stopMicTracks();
+  } else {
+    pendingChunks = [];  // discard audio recorded while muted
+    micBtn.classList.remove("muted");
+    speakingGlow.classList.add("session");
+    // Restart mic tracks
+    await restartMicTracks();
   }
 };
+
+// ── Mic track helpers (for mute/unmute without recreating AudioContext) ───
+function stopMicTracks() {
+  if (levelCheckInterval) { clearInterval(levelCheckInterval); levelCheckInterval = null; }
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    try { mediaRecorder.stop(); } catch (_) {}
+  }
+  mediaRecorder = null;
+  if (micSourceNode) {
+    try { micSourceNode.disconnect(); } catch (_) {}
+    micSourceNode = null;
+  }
+  if (audioStream) {
+    audioStream.getTracks().forEach(t => t.stop());
+    audioStream = null;
+  }
+  analyser = null;
+  headerChunk = null;
+  pendingChunks = [];
+  isSpeaking = false;
+  if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+  micBtn.classList.remove("recording");
+  speakingGlow.classList.remove("recording");
+}
+
+async function restartMicTracks() {
+  try {
+    audioStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      }
+    });
+
+    micSourceNode = audioContext.createMediaStreamSource(audioStream);
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 1024;
+    micSourceNode.connect(analyser);
+
+    mediaRecorder = new MediaRecorder(audioStream);
+    headerChunk = null;
+    pendingChunks = [];
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size === 0) return;
+      if (!headerChunk) {
+        headerChunk = e.data;
+      } else {
+        pendingChunks.push(e.data);
+      }
+    };
+
+    mediaRecorder.start(100);
+    startListening();
+  } catch (err) {
+    setStatus("error", "No mic");
+    console.error("Mic restart error:", err);
+  }
+}
 
 // ── Microphone setup ──────────────────────────────────────────────────────
 function teardownAudio() {
@@ -424,10 +510,10 @@ async function setupMic() {
     warmUp.connect(audioContext.destination);
     warmUp.start(0);
 
-    const source = audioContext.createMediaStreamSource(audioStream);
+    micSourceNode = audioContext.createMediaStreamSource(audioStream);
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 1024;
-    source.connect(analyser);
+    micSourceNode.connect(analyser);
 
     mediaRecorder = new MediaRecorder(audioStream);
     headerChunk = null;
@@ -446,7 +532,6 @@ async function setupMic() {
     micWasSetup = true;
     startListening();
     startSession();
-    setStatus("listening", "Listening…");
   } catch (err) {
     setStatus("error", "No mic");
     console.error("Mic error:", err);
@@ -459,7 +544,7 @@ function startListening() {
 }
 
 function checkAudioLevel() {
-  if (!analyser || processingExchange) return;
+  if (!analyser || processingExchange || micMuted) return;
   if (audioContext.state === "suspended") audioContext.resume();
 
   const data = new Uint8Array(analyser.fftSize);
