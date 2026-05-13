@@ -14,7 +14,7 @@ A voice-controlled coding assistant you talk to from your phone. Speak a request
 - **Mic mute toggle** — tap the mic button to mute; the OS mic indicator light goes off and Clio stays quiet until you unmute
 - **Live status badge** — shows what Clio is doing with a label and elapsed timer (e.g. "read agent.py (3s)")
 - **Amplitude-driven glow** — the speaking glow pulses in real time with the audio amplitude during playback
-- **Persistent memory** — Clio maintains a memory file across sessions and a per-session scratchpad
+- **Persistent memory** — Clio maintains a memory file across sessions, automatically extracting and consolidating facts from each conversation, with compression when the file grows too large
 - **Customizable personality** — edit `soul.md` to change how Clio thinks and speaks
 - **PWA** — installable on your phone's home screen, works over your local network via Tailscale
 
@@ -175,6 +175,8 @@ Edit `soul.md` to change how Clio speaks and behaves. It's loaded into the syste
 
 ### Memory (`memory.md`)
 Clio reads `memory.md` at the start of every turn and updates it via the `update_memory` tool. Edit it directly to give Clio context about you and your projects.
+
+After each conversation turn, Clio autonomously extracts any facts worth keeping and appends them to memory. At the start of each session, it consolidates logs from previous sessions into memory and marks them processed. If the memory file grows beyond a configurable size limit (`MEMORY_SIZE_LIMIT` in `agent.py`), it compresses the file by summarizing it — discarding redundancy while keeping what matters. This happens automatically, both on session start and after explicit `update_memory` calls.
 
 ### Tools
 Tools are defined in `laptop/tools.py`. Add new tools by:
