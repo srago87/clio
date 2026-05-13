@@ -9,7 +9,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .agent import AgentSession, TMP_DIR
+from .agent import AgentSession, TMP_DIR, consolidate_sessions
 from .session import VoiceSession
 
 # Set root logger to WARNING — silences all third-party noise (httpx, httpcore, anthropic, faster_whisper, etc.)
@@ -72,6 +72,12 @@ async def websocket_endpoint(websocket: WebSocket):
     agent = AgentSession(websocket, voice_session)
     processing_task: asyncio.Task | None = None
 
+    # Consolidate past session logs into memory in the background
+    asyncio.create_task(consolidate_sessions(current_log_path=voice_session.log_path))
+
+    # Ask the user whether to save this session to memory
+    await websocket.send_json({"type": "memory_prompt"})
+
     try:
         async for message in websocket.iter_json():
             msg_type = message.get("type")
@@ -89,6 +95,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 tool_call_id = message.get("tool_call_id", "")
                 approved = message.get("approved", False)
                 await agent.handle_permission_response(tool_call_id, approved)
+
+            elif msg_type == "memory_prompt_response":
+                agent.memory_enabled = message.get("enabled", False)
+                print(f"[agent] memory_enabled={agent.memory_enabled}")
 
     except WebSocketDisconnect:
         pass

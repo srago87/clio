@@ -12,7 +12,7 @@ from fastapi import WebSocket
 
 from .stt import transcribe
 from .tts import synthesize
-from .session import VoiceSession
+from .session import VoiceSession, LOGS_DIR
 from .tools import (
     TOOL_DEFINITIONS,
     AUTO_APPROVE,
@@ -39,11 +39,11 @@ from their phone and hears your responses read aloud, so:
 - You work in the user's coding environment at {WORK_DIR}
 - Your own source code lives at {CLIO_DIR}
 
-While executing a task — reading files, making edits, running commands, debugging — \
-say nothing between tool calls. Do not narrate what you are about to do, explain your \
-reasoning mid-task, or summarize intermediate results. Speak only when the task is \
-complete: one sentence stating what changed or what you found. The user can see tool \
-summaries in the UI; do not repeat them in speech.
+When using tools — from the very first tool call onward — say nothing. Do not announce \
+you are starting. Do not say "I'll start now" or "let me do that" or any equivalent. \
+Do not narrate steps or explain reasoning mid-task. Do not summarize intermediate results. \
+Speak only when the entire task is complete: one sentence stating what changed or what \
+you found. The user can see tool summaries in the UI; do not repeat them in speech.
 
 You have tools to read files, list directories, search code, find files, write files, \
 edit files, run shell commands, run background processes, delete files, update your memory, \
@@ -125,12 +125,142 @@ def _cleanup_old_audio():
             pass
 
 
+MEMORY_EXTRACTION_PROMPT = """\
+You are a memory extraction assistant. Given a conversation exchange, extract any facts \
+worth remembering for future sessions — decisions made, preferences expressed, project \
+context, bugs fixed, features built, or anything the user explicitly wants remembered.
+
+If nothing noteworthy happened (e.g. it was just small talk or a trivial question), \
+output exactly: NO_UPDATE
+
+Otherwise, output a brief, plain-English summary of what's worth keeping — 1-4 sentences. \
+Do NOT output the full memory file — just the new facts from this exchange."""
+
+MEMORY_SIZE_LIMIT = 500  # TEMP: lowered for compression test (normally 10 * 1024)
+
+
+async def consolidate_sessions(current_log_path=None):
+    """
+    Background task: find all unconsolidated session logs, summarize them into memory.md,
+    mark each as consolidated, then compress memory if it exceeds MEMORY_SIZE_LIMIT.
+    Also compresses memory unconditionally at session start if it exceeds the limit.
+    """
+    from .session import VoiceSession
+
+    client = anthropic.AsyncAnthropic()
+
+    # Always check memory size at session start, regardless of whether there are logs to consolidate
+    if MEMORY_PATH.exists():
+        current_size = len(MEMORY_PATH.read_bytes())
+        if current_size > MEMORY_SIZE_LIMIT:
+            print(f"[memory] memory exceeds limit on connect ({current_size} bytes), compressing")
+            await compress_memory(client)
+
+    logs = VoiceSession.get_unconsolidated_logs(exclude_path=current_log_path)
+    if not logs:
+        return
+
+    print(f"[memory] consolidating {len(logs)} session log(s)")
+    combined = []
+    for log in logs:
+        try:
+            text = log.read_text().strip()
+            if text:
+                combined.append(f"=== {log.name} ===\n{text}")
+        except OSError:
+            pass
+
+    if not combined:
+        for log in logs:
+            VoiceSession.mark_consolidated(log)
+        return
+
+    all_logs_text = "\n\n".join(combined)
+
+    try:
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=1024,
+            system=(
+                "You are a memory extraction assistant. Given one or more voice session logs, "
+                "extract facts worth remembering for future sessions — decisions made, preferences "
+                "expressed, project context, bugs fixed, features built, or anything the user "
+                "explicitly wanted remembered. If nothing noteworthy happened across all sessions, "
+                "output exactly: NO_UPDATE\n\n"
+                "Otherwise output a concise plain-English summary of what's worth keeping."
+            ),
+            messages=[{"role": "user", "content": all_logs_text}],
+        )
+        extracted = response.content[0].text.strip()
+
+        if extracted != "NO_UPDATE":
+            current_memory = MEMORY_PATH.read_text().strip() if MEMORY_PATH.exists() else ""
+            merge_response = await client.messages.create(
+                model=MODEL,
+                max_tokens=4096,
+                system=(
+                    "You are a memory management assistant. Merge new facts into the existing "
+                    "memory file naturally — update existing sections where relevant, add new facts "
+                    "where appropriate. Return the complete updated memory file. Preserve all "
+                    "existing content unless a new fact directly supersedes it."
+                ),
+                messages=[{
+                    "role": "user",
+                    "content": f"Current memory:\n{current_memory}\n\nNew facts:\n{extracted}",
+                }],
+            )
+            updated_memory = merge_response.content[0].text.strip()
+            MEMORY_PATH.write_text(updated_memory + "\n")
+            print(f"[memory] memory updated ({len(updated_memory)} bytes)")
+
+            # Compress if over size limit
+            if len(updated_memory.encode()) > MEMORY_SIZE_LIMIT:
+                await compress_memory(client, updated_memory)
+
+    except Exception as e:
+        print(f"[memory] consolidation error: {e!r}")
+        return
+
+    # Mark all logs as consolidated regardless of whether there was anything to save
+    for log in logs:
+        VoiceSession.mark_consolidated(log)
+    print(f"[memory] marked {len(logs)} log(s) as consolidated")
+
+
+async def compress_memory(client: anthropic.AsyncAnthropic, current_text: str = None):
+    """Summarize memory.md down when it exceeds the size limit."""
+    try:
+        if current_text is None:
+            current_text = MEMORY_PATH.read_text().strip() if MEMORY_PATH.exists() else ""
+        if not current_text:
+            return
+
+        print(f"[memory] compressing memory ({len(current_text.encode())} bytes)")
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=2048,
+            system=(
+                "You are a memory compression assistant. The memory file has grown too large. "
+                "Summarize and compress it — keep the most important facts, preferences, and "
+                "decisions, but eliminate redundancy and verbose phrasing. Aim for under 6KB. "
+                "Return only the compressed memory content."
+            ),
+            messages=[{"role": "user", "content": current_text}],
+        )
+        compressed = response.content[0].text.strip()
+        MEMORY_PATH.write_text(compressed + "\n")
+        print(f"[memory] compressed to {len(compressed.encode())} bytes")
+    except Exception as e:
+        print(f"[memory] compression error: {e!r}")
+
+
 class AgentSession:
     def __init__(self, websocket: WebSocket, voice_session: VoiceSession):
         self.websocket = websocket
         self.voice_session = voice_session
         self.conversation: list = []
         self.scratchpad: str = ""
+        self.memory_enabled: bool = False
         self._pending_permission: Optional[asyncio.Future] = None
         self._pending_tool_id: Optional[str] = None
         TMP_DIR.mkdir(exist_ok=True)
@@ -181,6 +311,12 @@ class AgentSession:
         # Clean up stale audio files from previous turns
         await asyncio.to_thread(_cleanup_old_audio)
 
+        # Snapshot conversation length so we can roll back if this turn is cancelled
+        # mid-execution (e.g. user speaks while tools are running). Without this,
+        # a cancelled turn can leave an assistant tool_use block with no matching
+        # tool_result, which causes an API error on the next call.
+        checkpoint = len(self.conversation)
+
         try:
             # 1. Transcribe
             await self._status("transcribing", "Transcribing…")
@@ -204,9 +340,68 @@ class AgentSession:
             self.voice_session.add_exchange(transcript, response_text)
             await self._send({"type": "turn_end"})
 
+            # 4. Async memory extraction (non-blocking, best-effort)
+            if self.memory_enabled:
+                asyncio.create_task(
+                    self._extract_and_save_memory(client, transcript, response_text)
+                )
+
+        except asyncio.CancelledError:
+            del self.conversation[checkpoint:]
+            raise
+
         except Exception as e:
             print(f"[agent] ERROR: {e!r}")
             await self._send({"type": "error", "message": str(e)})
+
+    # ── memory extraction ─────────────────────────────────────────────────
+
+    async def _extract_and_save_memory(
+        self,
+        client: anthropic.AsyncAnthropic,
+        user_text: str,
+        assistant_text: str,
+    ):
+        """Non-blocking: extract noteworthy facts from this exchange and merge into memory."""
+        try:
+            exchange_summary = f"User: {user_text}\n\nAssistant: {assistant_text}"
+            response = await client.messages.create(
+                model=MODEL,
+                max_tokens=512,
+                system=MEMORY_EXTRACTION_PROMPT,
+                messages=[{"role": "user", "content": exchange_summary}],
+            )
+            extracted = response.content[0].text.strip()
+            if extracted == "NO_UPDATE":
+                return
+
+            # Merge extracted facts into the existing memory file
+            current_memory = MEMORY_PATH.read_text().strip() if MEMORY_PATH.exists() else ""
+            merge_response = await client.messages.create(
+                model=MODEL,
+                max_tokens=4096,
+                system=(
+                    "You are a memory management assistant. You will be given the current memory file "
+                    "and new facts extracted from a recent conversation. Merge the new facts into the "
+                    "memory file naturally — update existing sections where relevant, add new facts where "
+                    "appropriate. Return the complete updated memory file. Preserve all existing content "
+                    "unless a new fact directly supersedes it."
+                ),
+                messages=[{
+                    "role": "user",
+                    "content": f"Current memory:\n{current_memory}\n\nNew facts:\n{extracted}",
+                }],
+            )
+            updated_memory = merge_response.content[0].text.strip()
+            MEMORY_PATH.write_text(updated_memory + "\n")
+            print(f"[agent] memory updated ({len(updated_memory)} bytes)")
+
+            # Compress if over size limit
+            if len(updated_memory.encode()) > MEMORY_SIZE_LIMIT:
+                await compress_memory(client, updated_memory)
+
+        except Exception as e:
+            print(f"[agent] memory extraction error: {e!r}")
 
     # ── streaming agent loop ──────────────────────────────────────────────
 
@@ -283,7 +478,7 @@ class AgentSession:
 
             if response.stop_reason == "tool_use":
                 await self._send({"type": "close_bubble"})
-                tool_results = await self._handle_tool_calls(response.content)
+                tool_results = await self._handle_tool_calls(response.content, client)
                 self.conversation.append({
                     "role": "user",
                     "content": tool_results,
@@ -306,7 +501,7 @@ class AgentSession:
 
     # ── tool execution ────────────────────────────────────────────────────
 
-    async def _handle_tool_calls(self, content) -> list:
+    async def _handle_tool_calls(self, content, client: anthropic.AsyncAnthropic) -> list:
         """Execute all tool_use blocks, requesting permission as needed."""
         tool_results = []
 
@@ -360,6 +555,12 @@ class AgentSession:
 
             await self._status("executing", description)
             result = await asyncio.to_thread(execute_tool, block.name, block.input)
+
+            # Compress memory if an explicit update_memory call pushed it over the limit
+            if block.name == "update_memory":
+                updated = MEMORY_PATH.read_text() if MEMORY_PATH.exists() else ""
+                if len(updated.encode()) > MEMORY_SIZE_LIMIT:
+                    await compress_memory(client, updated)
 
             await self._send({
                 "type": "tool_result",

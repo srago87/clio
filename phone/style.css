@@ -112,6 +112,47 @@ header::before {
 }
 
 
+/* ── Memory prompt overlay ─────────────────────────────────────────────── */
+
+#memory-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.9);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+#memory-overlay.visible { display: flex; }
+
+#memory-card {
+  background: var(--surface);
+  border: 1px solid var(--cyan-dim);
+  border-radius: 4px;
+  padding: 24px;
+  max-width: 360px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#memory-card h2 {
+  font-size: 0.65rem;
+  color: var(--cyan);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+}
+
+#memory-card p {
+  font-size: 0.9rem;
+  color: var(--text-bright);
+  line-height: 1.5;
+  font-weight: 300;
+}
+
 /* ── Permission overlay ────────────────────────────────────────────────── */
 
 #permission-overlay {

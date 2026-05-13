@@ -40,6 +40,10 @@ let micWasSetup = false;
 // Track mute state
 let micMuted = false;
 
+// Track memory prompt state
+let memoryEnabled = false;
+let memoryPromptResolved = false;
+
 // ── DOM ───────────────────────────────────────────────────────────────────
 const statusBadge      = document.getElementById("status-badge");
 const conversation     = document.getElementById("conversation");
@@ -49,6 +53,9 @@ const permOverlay      = document.getElementById("permission-overlay");
 const permDescription  = document.getElementById("permission-description");
 const btnApprove       = document.getElementById("btn-approve");
 const btnDeny          = document.getElementById("btn-deny");
+const memoryOverlay    = document.getElementById("memory-overlay");
+const btnMemoryYes     = document.getElementById("btn-memory-yes");
+const btnMemoryNo      = document.getElementById("btn-memory-no");
 const progressBar      = document.getElementById("progress-bar");
 const speakingGlow     = document.getElementById("speaking-glow");
 
@@ -105,6 +112,9 @@ function handleServerMessage(msg) {
       break;
     case "permission_request":
       showPermission(msg.tool_call_id, msg.tool, msg.description);
+      break;
+    case "memory_prompt":
+      showMemoryPrompt();
       break;
     case "error":
       setStatus("error", "Error");
@@ -358,6 +368,24 @@ function resetTurnState() {
   stopStatusTimer();
   micBtn.classList.remove("disabled");
 }
+
+// ── Memory prompt ─────────────────────────────────────────────────────────
+function showMemoryPrompt() {
+  if (memoryPromptResolved) return;
+  memoryOverlay.classList.add("visible");
+}
+
+function resolveMemoryPrompt(enabled) {
+  memoryEnabled = enabled;
+  memoryPromptResolved = true;
+  memoryOverlay.classList.remove("visible");
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "memory_prompt_response", enabled }));
+  }
+}
+
+btnMemoryYes.onclick = () => resolveMemoryPrompt(true);
+btnMemoryNo.onclick  = () => resolveMemoryPrompt(false);
 
 // ── Permission ────────────────────────────────────────────────────────────
 function showPermission(toolCallId, tool, description) {
