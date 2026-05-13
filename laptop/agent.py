@@ -136,7 +136,7 @@ output exactly: NO_UPDATE
 Otherwise, output a brief, plain-English summary of what's worth keeping — 1-4 sentences. \
 Do NOT output the full memory file — just the new facts from this exchange."""
 
-MEMORY_SIZE_LIMIT = 500  # TEMP: lowered for compression test (normally 10 * 1024)
+MEMORY_SIZE_LIMIT = 10 * 1024  # 10KB
 
 
 async def consolidate_sessions(current_log_path=None):
