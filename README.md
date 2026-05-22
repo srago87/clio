@@ -25,13 +25,13 @@ A voice-controlled coding assistant you talk to from your phone. Speak a request
 ```
 Phone (PWA)
     ↕ WebSocket (wss://)
-FastAPI Backend (laptop)
+FastAPI Backend (server)
     ├── faster-whisper  (speech-to-text)
     ├── Anthropic API   (Claude Sonnet agent loop)
     ├── piper-tts       (text-to-speech, streamed sentence by sentence)
     └── VoiceSession    (markdown log per connection)
 
-Tailscale → laptop:8765 (HTTPS/WSS via Tailscale cert)
+Tailscale → server:8765 (HTTPS/WSS via Tailscale cert)
 ```
 
 The agent loop streams Claude's response token by token, splits it into sentences, and synthesizes + sends each sentence to the phone as it completes — so audio starts playing within a couple of seconds of Claude beginning to respond.
@@ -76,7 +76,7 @@ Then clone and set up:
 git clone https://github.com/srago87/clio
 cd clio
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r laptop/requirements.txt
+pip install -r server/requirements.txt
 ```
 
 ### 2. Download models
@@ -84,12 +84,12 @@ pip install -r laptop/requirements.txt
 **Whisper (speech-to-text):**
 ```bash
 # The base model downloads automatically on first run.
-# For better accuracy at the cost of speed, edit WHISPER_MODEL in laptop/stt.py
+# For better accuracy at the cost of speed, edit WHISPER_MODEL in server/stt.py
 ```
 
 **Piper (text-to-speech):**
 ```bash
-cd laptop/models
+cd server/models
 wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
 wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
 ```
@@ -107,7 +107,7 @@ cp soul.example.md soul.md
 Edit `config.sh` and set your networking option:
 
 **Option A — Tailscale (for real use):**
-Set `TUNNEL_MODE=tailscale` and fill in your `TAILSCALE_HOST`. Tailscale must be installed and connected on both your laptop and phone. `start.sh` provisions a TLS cert automatically via `tailscale cert`. This gives you a stable URL, a working PWA, and keeps your audio traffic on your local network. This is the only option that works well for repeated daily use.
+Set `TUNNEL_MODE=tailscale` and fill in your `TAILSCALE_HOST`. Tailscale must be installed and connected on both your server and phone. `start.sh` provisions a TLS cert automatically via `tailscale cert`. This gives you a stable URL, a working PWA, and keeps your audio traffic on your local network. This is the only option that works well for repeated daily use.
 
 **Option B — Cloudflare Tunnel (just trying it out):**
 Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), then set `TUNNEL_MODE=cloudflare`. No Tailscale or cert setup needed — good for a quick test without committing to Tailscale. The URL changes on each restart, so PWA installation won't persist and you'll need to open a new URL in the browser every time you start Clio.
@@ -179,7 +179,7 @@ Clio reads `memory.md` at the start of every turn and updates it via the `update
 After each conversation turn, Clio autonomously extracts any facts worth keeping and appends them to memory. At the start of each session, it consolidates logs from previous sessions into memory and marks them processed. If the memory file grows beyond a configurable size limit (`MEMORY_SIZE_LIMIT` in `agent.py`), it compresses the file by summarizing it — discarding redundancy while keeping what matters. This happens automatically, both on session start and after explicit `update_memory` calls.
 
 ### Tools
-Tools are defined in `laptop/tools.py`. Add new tools by:
+Tools are defined in `server/tools.py`. Add new tools by:
 1. Adding a definition to `TOOL_DEFINITIONS`
 2. Adding the tool name to `AUTO_APPROVE` or `REQUIRE_APPROVAL`
 3. Adding a case to `execute_tool`
@@ -225,7 +225,7 @@ Tools are defined in `laptop/tools.py`. Add new tools by:
 
 ```
 clio/
-├── laptop/
+├── server/
 │   ├── main.py         # FastAPI app, WebSocket endpoint, logging setup
 │   ├── agent.py        # AgentSession: STT → Claude agent loop → TTS
 │   ├── tools.py        # Tool definitions and execution

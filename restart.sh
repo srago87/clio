@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "Stopping Clio..."
-pkill -f "uvicorn laptop.main:app" || echo "No running instance found."
+pkill -f "uvicorn server.main:app" || echo "No running instance found."
 
 sleep 1
 

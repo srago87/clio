@@ -40,14 +40,14 @@ else
 fi
 
 source .venv/bin/activate
-pip install -q -r laptop/requirements.txt
+pip install -q -r server/requirements.txt
 ok "Dependencies installed"
 
 # ── 2. TTS voice model ────────────────────────────────────────────────────────
 
 step "TTS voice model"
 
-MODEL_DIR="$SCRIPT_DIR/laptop/models"
+MODEL_DIR="$SCRIPT_DIR/server/models"
 ONNX="$MODEL_DIR/en_US-lessac-medium.onnx"
 JSON_FILE="$MODEL_DIR/en_US-lessac-medium.onnx.json"
 BASE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium"

@@ -1,0 +1,6 @@
+127.0.0.1 - - [27/Apr/2026 18:51:25] "GET / HTTP/1.1" 304 -
+127.0.0.1 - - [27/Apr/2026 18:51:25] "GET /app.js HTTP/1.1" 304 -
+127.0.0.1 - - [27/Apr/2026 18:51:25] "GET /style.css HTTP/1.1" 304 -
+Serving HTTP on 0.0.0.0 port 8081 (http://0.0.0.0:8081/) ...
+
+Keyboard interrupt received, exiting.

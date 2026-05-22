@@ -9,7 +9,7 @@ Technical reference for the Clio codebase.
 ```
 Phone (PWA)
     ↕ WebSocket (wss://)
-FastAPI Backend (laptop)
+FastAPI Backend (server)
     ├── faster-whisper  (speech-to-text)
     ├── Anthropic API   (Claude Sonnet agent loop)
     ├── piper-tts       (text-to-speech, streamed sentence by sentence)
@@ -70,7 +70,7 @@ Note: there is no `speaking` state sent to the phone — the user can already he
 
 ---
 
-## Agent loop (`laptop/agent.py`)
+## Agent loop (`server/agent.py`)
 
 `AgentSession` is created per WebSocket connection and lives until the connection closes. It holds:
 - `conversation` — the full message history for this session
@@ -94,7 +94,7 @@ The system prompt is split into two blocks to maximize cache hits:
 
 ---
 
-## Tools (`laptop/tools.py`)
+## Tools (`server/tools.py`)
 
 Tools fall into two categories:
 
@@ -120,9 +120,9 @@ If both fail, returns an error indicating whether the first line was found (cont
 
 ---
 
-## Background jobs (`laptop/jobs.py`)
+## Background jobs (`server/jobs.py`)
 
-`BackgroundJobManager` is a module-level singleton. Each job is a `subprocess.Popen` with stdout/stderr piped to a temp log file in `laptop/tmp/`.
+`BackgroundJobManager` is a module-level singleton. Each job is a `subprocess.Popen` with stdout/stderr piped to a temp log file in `server/tmp/`.
 
 - Jobs survive phone disconnects (WebSocket reconnects create a new `AgentSession` but the job manager persists at process level)
 - `check_job` tails the log file — no blocking, no pipes to drain
@@ -131,7 +131,7 @@ If both fail, returns an error indicating whether the first line was found (cont
 
 ---
 
-## Speech-to-text (`laptop/stt.py`)
+## Speech-to-text (`server/stt.py`)
 
 Uses faster-whisper with the `base` model by default. Key settings:
 
@@ -146,9 +146,9 @@ Post-processing: strips hallucinated leading "Hello" and "Hello? Yes" phrases; s
 
 ---
 
-## Text-to-speech (`laptop/tts.py`)
+## Text-to-speech (`server/tts.py`)
 
-Uses piper-tts with the `en_US-lessac-medium` voice. Sentences are synthesized one at a time and served as WAV files from `laptop/tmp/`. The phone fetches each WAV via HTTP and plays them sequentially.
+Uses piper-tts with the `en_US-lessac-medium` voice. Sentences are synthesized one at a time and served as WAV files from `server/tmp/`. The phone fetches each WAV via HTTP and plays them sequentially.
 
 WAV files older than 5 minutes are deleted at the start of each turn.
 
@@ -191,7 +191,7 @@ On unmute, `restartMicTracks()` calls `getUserMedia` again, rebuilds the mic pip
 
 ## Session logs
 
-Each WebSocket connection generates a markdown log in `laptop/logs/`:
+Each WebSocket connection generates a markdown log in `server/logs/`:
 
 ```
 # Claude Voice Session
