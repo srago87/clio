@@ -63,6 +63,13 @@ def transcribe(audio_path: str) -> str:
         transcript = re.sub(r'^[^\w\s]+\s*', '', transcript).strip()
         if transcript:
             transcript = transcript[0].upper() + transcript[1:]
+        # Detect priming hallucination: if transcript starts with the previous
+        # transcript, Whisper is anchoring on a prior phrase — strip the repeated part.
+        if _last_transcript and transcript.lower().startswith(_last_transcript.lower()):
+            transcript = transcript[len(_last_transcript):].strip()
+            if transcript:
+                transcript = transcript[0].upper() + transcript[1:]
+        _last_transcript = transcript
         return transcript
     except Exception:
         return ""
