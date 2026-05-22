@@ -15,13 +15,13 @@ server.log.1
 
 # Runtime directories
 .venv/
-laptop/__pycache__/
-laptop/tmp/
-laptop/logs/
+server/__pycache__/
+server/tmp/
+server/logs/
 
 # Model files — downloaded separately (see README)
-laptop/models/*
-!laptop/models/.gitkeep
+server/models/*
+!server/models/.gitkeep
 
 # Claude Code local settings
 .claude/settings.local.json
