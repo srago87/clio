@@ -27,6 +27,7 @@ _HALLUCINATION_BLOCKLIST = [
 ]
 
 _model = None
+_last_transcript: str = ""  # tracks previous transcript to detect priming hallucinations
 
 def get_model() -> WhisperModel:
     global _model
@@ -35,6 +36,7 @@ def get_model() -> WhisperModel:
     return _model
 
 def transcribe(audio_path: str) -> str:
+    global _last_transcript
     import time
     try:
         model = get_model()
@@ -53,8 +55,10 @@ def transcribe(audio_path: str) -> str:
         print(f"[stt] transcribed in {(time.time()-t0)*1000:.0f}ms")
         transcript = " ".join(texts).strip()
         transcript = transcript.replace("Cleo", "Clio").replace("CLEO", "CLIO").replace("cleo", "clio")
-        # Strip hallucinated leading "Hello" only when followed by more content
         import re
+        # Fix Whisper mishearing "Hi, Clio" as "High Clio"
+        transcript = re.sub(r'\bHigh Clio\b', 'Hi, Clio', transcript, flags=re.IGNORECASE)
+        # Strip hallucinated leading "Hello" only when followed by more content
         transcript = re.sub(r'^Hello[,.]?\s+(?=\S)', '', transcript).strip()
         transcript = re.sub(r'^[^\w\s]+\s*', '', transcript).strip()
         if transcript:
