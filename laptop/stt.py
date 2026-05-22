@@ -6,6 +6,26 @@ WHISPER_MODEL = "base"
 MODELS_DIR = Path(__file__).parent / "models"
 NO_SPEECH_THRESHOLD = 0.75  # discard segments where Whisper thinks there's no speech
 
+# Whisper was trained on YouTube transcripts and hallucinates these phrases on
+# short/ambiguous audio, usually with spuriously high confidence.
+_HALLUCINATION_BLOCKLIST = [
+    "thanks for watching",
+    "thank you for watching",
+    "don't forget to subscribe",
+    "please subscribe",
+    "like and subscribe",
+    "hit the like button",
+    "hit the bell",
+    "see you in the next video",
+    "see you next time",
+    "in the next video",
+    "subscribe to my channel",
+    "smash the like button",
+    "turn on notifications",
+    "comment down below",
+    "check out my other videos",
+]
+
 _model = None
 
 def get_model() -> WhisperModel:
@@ -25,7 +45,11 @@ def transcribe(audio_path: str) -> str:
             vad_filter=True,               # strip non-speech (breathing, silence) before transcription
             condition_on_previous_text=False,  # reduce hallucinations
         )
-        texts = [s.text for s in segments if s.no_speech_prob < NO_SPEECH_THRESHOLD]
+        texts = [
+            s.text for s in segments
+            if s.no_speech_prob < NO_SPEECH_THRESHOLD
+            and not any(phrase in s.text.lower() for phrase in _HALLUCINATION_BLOCKLIST)
+        ]
         print(f"[stt] transcribed in {(time.time()-t0)*1000:.0f}ms")
         transcript = " ".join(texts).strip()
         transcript = transcript.replace("Cleo", "Clio").replace("CLEO", "CLIO").replace("cleo", "clio")
