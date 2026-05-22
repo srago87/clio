@@ -224,3 +224,19 @@ Clio uses Tailscale for phone access. `start.sh`:
 4. Pushes the URL to your phone via ntfy.sh (if configured)
 
 The self-signed cert enables `wss://` WebSocket connections, required for PWA mic access on mobile browsers.
+
+---
+
+## Future work
+
+### Interrupt-while-speaking
+
+Currently the mic re-enables only after the full audio queue drains (`turn_end` + queue empty). A better UX would let the user speak mid-response and have Clio stop immediately to listen — the same way a real conversation works.
+
+What this would require:
+- Phone detects voice activity during playback and sends an `interrupt` message over the WebSocket
+- Backend cancels the in-flight Claude stream and the `synthesis_worker` task, discards queued audio chunks
+- Backend sends a `stop_audio` message; phone clears the playback queue and stops current audio
+- Mic pipeline restarts and normal VAD flow resumes
+
+The phone-side VAD already runs continuously (see Silence detection), so detecting speech during playback is straightforward. The harder part is cleanly cancelling the async synthesis worker and stream without corrupting conversation state.
