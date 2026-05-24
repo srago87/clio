@@ -312,6 +312,8 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 - Notification when long tasks finish — push an ntfy.sh notification to the phone when a multi-step task completes so the user does not have to watch the screen.
 - Tool usage history panel — a collapsible log on the phone UI showing all tool calls made in the current session, beyond the single-line summaries currently shown.
 - ARM and x86 Docker image — make setup truly one-command on any Linux host.
+- Cross-platform support — extend Clio to run on macOS and Windows, not just Linux.
+- Multi-LLM support — allow users to configure alternative LLM backends (OpenAI, Gemini, local models via Ollama, etc.) instead of being locked to the Anthropic Claude API.
 
 ---
 
