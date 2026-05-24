@@ -491,7 +491,7 @@ class AgentSession:
                 break
 
             if response.stop_reason == "tool_use":
-                await self._status("planning", "Planning…")
+                await self._status("executing", "Running…")
                 await self._send({"type": "close_bubble"})
                 tool_results = await self._handle_tool_calls(response.content, client)
                 self.conversation.append({

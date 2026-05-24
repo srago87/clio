@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .agent import AgentSession, TMP_DIR, consolidate_sessions
 from .session import VoiceSession
+from .stt import reset_last_transcript
 
 # Set root logger to WARNING — silences all third-party noise (httpx, httpcore, anthropic, faster_whisper, etc.)
 logging.getLogger().setLevel(logging.WARNING)
@@ -68,6 +69,7 @@ async def serve_audio(filename: str):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    reset_last_transcript()  # clear cross-session priming so hallucinations get filtered
     voice_session = VoiceSession()
     agent = AgentSession(websocket, voice_session)
     processing_task: asyncio.Task | None = None

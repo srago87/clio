@@ -34,6 +34,11 @@ _HALLUCINATION_BLOCKLIST = [
 _model = None
 _last_transcript: str = ""  # tracks previous transcript to detect priming hallucinations
 
+def reset_last_transcript():
+    """Call at the start of a new session to prevent cross-session priming hallucinations."""
+    global _last_transcript
+    _last_transcript = ""
+
 def get_model() -> WhisperModel:
     global _model
     if _model is None:
