@@ -10,6 +10,7 @@ from typing import Optional
 import anthropic
 from fastapi import WebSocket
 
+from .cost import SessionCostTracker, log_usage
 from .stt import transcribe
 from .tts import synthesize
 from .session import VoiceSession, LOGS_DIR
@@ -191,6 +192,7 @@ async def consolidate_sessions(current_log_path=None):
             ),
             messages=[{"role": "user", "content": all_logs_text}],
         )
+        log_usage("consolidation-extract", response.usage)
         extracted = response.content[0].text.strip()
 
         if extracted != "NO_UPDATE":
@@ -209,6 +211,7 @@ async def consolidate_sessions(current_log_path=None):
                     "content": f"Current memory:\n{current_memory}\n\nNew facts:\n{extracted}",
                 }],
             )
+            log_usage("consolidation-merge", merge_response.usage)
             updated_memory = merge_response.content[0].text.strip()
             MEMORY_PATH.write_text(updated_memory + "\n")
             print(f"[memory] memory updated ({len(updated_memory)} bytes)")
@@ -227,7 +230,7 @@ async def consolidate_sessions(current_log_path=None):
     print(f"[memory] marked {len(logs)} log(s) as consolidated")
 
 
-async def compress_memory(client: anthropic.AsyncAnthropic, current_text: str = None):
+async def compress_memory(client: anthropic.AsyncAnthropic, current_text: str = None, cost: "SessionCostTracker | None" = None):
     """Summarize memory.md down when it exceeds the size limit."""
     try:
         if current_text is None:
@@ -247,6 +250,10 @@ async def compress_memory(client: anthropic.AsyncAnthropic, current_text: str = 
             ),
             messages=[{"role": "user", "content": current_text}],
         )
+        if cost is not None:
+            cost.record("mem-compress", response.usage)
+        else:
+            log_usage("mem-compress", response.usage)
         compressed = response.content[0].text.strip()
         MEMORY_PATH.write_text(compressed + "\n")
         print(f"[memory] compressed to {len(compressed.encode())} bytes")
@@ -263,7 +270,11 @@ class AgentSession:
         self.memory_enabled: bool = False
         self._pending_permission: Optional[asyncio.Future] = None
         self._pending_tool_id: Optional[str] = None
+        self.cost = SessionCostTracker()
         TMP_DIR.mkdir(exist_ok=True)
+
+    def log_cost(self) -> None:
+        print(self.cost.report())
 
     # ── outbound helpers ──────────────────────────────────────────────────
 
@@ -371,6 +382,7 @@ class AgentSession:
                 system=MEMORY_EXTRACTION_PROMPT,
                 messages=[{"role": "user", "content": exchange_summary}],
             )
+            self.cost.record("mem-extract", response.usage)
             extracted = response.content[0].text.strip()
             if extracted == "NO_UPDATE":
                 return
@@ -392,6 +404,7 @@ class AgentSession:
                     "content": f"Current memory:\n{current_memory}\n\nNew facts:\n{extracted}",
                 }],
             )
+            self.cost.record("mem-merge", merge_response.usage)
             updated_memory = merge_response.content[0].text.strip()
             MEMORY_PATH.write_text(updated_memory + "\n")
             print(f"[agent] memory updated ({len(updated_memory)} bytes)")
@@ -465,6 +478,7 @@ class AgentSession:
                 await worker                    # wait for all synthesis to finish
 
                 response = await stream.get_final_message()
+                self.cost.record("turn", response.usage)
 
             full_text += turn_text
 
@@ -477,13 +491,14 @@ class AgentSession:
                 break
 
             if response.stop_reason == "tool_use":
+                await self._status("planning", "Planning…")
                 await self._send({"type": "close_bubble"})
                 tool_results = await self._handle_tool_calls(response.content, client)
                 self.conversation.append({
                     "role": "user",
                     "content": tool_results,
                 })
-                await self._status("thinking", "Thinking…")
+                await self._status("planning", "Planning…")
             else:
                 break
 
@@ -560,7 +575,7 @@ class AgentSession:
             if block.name == "update_memory":
                 updated = MEMORY_PATH.read_text() if MEMORY_PATH.exists() else ""
                 if len(updated.encode()) > MEMORY_SIZE_LIMIT:
-                    await compress_memory(client, updated)
+                    await compress_memory(client, updated, self.cost)
 
             await self._send({
                 "type": "tool_result",

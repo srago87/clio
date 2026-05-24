@@ -105,4 +105,5 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         if processing_task and not processing_task.done():
             processing_task.cancel()
+        agent.log_cost()
         voice_session.end()

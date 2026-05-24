@@ -131,12 +131,13 @@ function handleStatus(state, label) {
   const defaultLabels = {
     transcribing:       "Transcribing…",
     thinking:           "Thinking…",
+    planning:           "Planning…",
     executing:          "Running…",
     waiting_permission: "Waiting…",
   };
   const displayLabel = label || defaultLabels[state] || state;
 
-  const timed = state === "transcribing" || state === "thinking" || state === "executing";
+  const timed = state === "transcribing" || state === "thinking" || state === "planning" || state === "executing";
 
   if (timed) {
     startStatusTimer(state, displayLabel);

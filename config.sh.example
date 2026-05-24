@@ -8,6 +8,10 @@
 #
 TUNNEL_MODE="tailscale"
 
+# Language for speech recognition. Set to a language code (e.g. "en") to prevent
+# Whisper from misidentifying your speech as another language. Leave empty to auto-detect.
+STT_LANGUAGE="en"
+
 # Your Tailscale hostname — run `tailscale status` to find it.
 # Only required when TUNNEL_MODE=tailscale.
 TAILSCALE_HOST="your-machine.tail12345.ts.net"

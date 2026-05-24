@@ -1,10 +1,15 @@
 # stt.py — speech-to-text using faster-whisper
+import os
 from pathlib import Path
 from faster_whisper import WhisperModel
 
 WHISPER_MODEL = "base"
 MODELS_DIR = Path(__file__).parent / "models"
 NO_SPEECH_THRESHOLD = 0.75  # discard segments where Whisper thinks there's no speech
+
+# Optional language hint — set STT_LANGUAGE in config.sh (e.g. "en") to prevent
+# Whisper from misidentifying your speech as another language.
+STT_LANGUAGE = os.environ.get("STT_LANGUAGE") or None
 
 # Whisper was trained on YouTube transcripts and hallucinates these phrases on
 # short/ambiguous audio, usually with spuriously high confidence.
@@ -46,6 +51,7 @@ def transcribe(audio_path: str) -> str:
             beam_size=1,
             vad_filter=True,               # strip non-speech (breathing, silence) before transcription
             condition_on_previous_text=False,  # reduce hallucinations
+            language=STT_LANGUAGE,         # None = auto-detect; set STT_LANGUAGE in config.sh to force a language
         )
         texts = [
             s.text for s in segments
