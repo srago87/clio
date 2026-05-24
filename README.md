@@ -292,6 +292,30 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 
 ---
 
+## Roadmap
+
+### Bug fixes
+- Muting the mic clears the status badge — it should not. The badge should stay visible while Clio is working and only clear when the turn finishes.
+- The transition between "planning" and "executing" states is not always clear to the user. After Clio finishes speaking a plan, there are moments of silence where it is unclear whether Clio is actively working or waiting for a new prompt.
+
+### Improvements
+- Better visible browser navigation — when browser_open is called with headless=false, Clio should be able to narrate what it sees on screen more fluidly and take more natural multi-step browsing actions without needing explicit instructions for each step.
+- Improve the status badge language to distinguish between "about to edit" (planning) and "currently editing" (executing), so the user always knows whether Clio is still thinking or actively making changes.
+- Smarter sentence splitting — the current regex splits only on period/exclamation/question mark followed by whitespace, which means code identifiers, URLs, and abbreviations can cause premature splits or missed splits.
+- Whisper model selection at runtime — currently requires editing stt.py directly; could be a config option in config.sh.
+- Context management for long sessions — conversation history grows without bound; add summarization or sliding-window trimming before context limits are hit.
+- Cost reporting to the phone — the SessionCostTracker already accumulates token usage per turn but only prints it to the server log; surface a session cost summary to the user on request.
+- Wake-word support — allow Clio to listen passively and activate only when it hears its name, without requiring the user to tap the mic.
+- Multi-voice TTS — allow the user to choose from multiple piper voices in config.sh without editing Python source.
+
+### New features
+- Conversation export — let the user ask Clio to save the current session transcript to a file.
+- Notification when long tasks finish — push an ntfy.sh notification to the phone when a multi-step task completes so the user does not have to watch the screen.
+- Tool usage history panel — a collapsible log on the phone UI showing all tool calls made in the current session, beyond the single-line summaries currently shown.
+- ARM and x86 Docker image — make setup truly one-command on any Linux host.
+
+---
+
 ## Contributing
 
 Pull requests welcome. The most valuable contributions are:
