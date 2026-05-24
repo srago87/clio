@@ -133,7 +133,43 @@ else
   fi
 fi
 
-# ── 5. Anthropic API key ──────────────────────────────────────────────────────
+# ── 5. Speech recognition language ───────────────────────────────────────────
+
+step "Speech recognition language"
+
+echo ""
+echo "  Choose your spoken language so Whisper recognizes your speech correctly."
+echo "  (Skipping this can cause Whisper to misidentify your language.)"
+echo ""
+echo "    1) English  (en)"
+echo "    2) Spanish  (es)"
+echo "    3) French   (fr)"
+echo "    4) German   (de)"
+echo "    5) Japanese (ja)"
+echo "    6) Other    (enter a Whisper language code manually)"
+echo ""
+
+while true; do
+  read -rp "  Choose [1-6]: " lang_choice
+  case "$lang_choice" in
+    1) STT_LANGUAGE="en"; break ;;
+    2) STT_LANGUAGE="es"; break ;;
+    3) STT_LANGUAGE="fr"; break ;;
+    4) STT_LANGUAGE="de"; break ;;
+    5) STT_LANGUAGE="ja"; break ;;
+    6)
+      read -rp "  Enter language code (e.g. zh, pt, ko): " STT_LANGUAGE
+      [ -n "$STT_LANGUAGE" ] && break
+      echo "  Language code cannot be empty."
+      ;;
+    *) echo "  Please enter a number from 1 to 6." ;;
+  esac
+done
+
+sed -i "s|^STT_LANGUAGE=.*|STT_LANGUAGE=\"$STT_LANGUAGE\"|" config.sh
+ok "Language set to $STT_LANGUAGE"
+
+# ── 6. Anthropic API key ──────────────────────────────────────────────────────
 
 step "Anthropic API key"
 
@@ -175,7 +211,7 @@ if [ -n "$api_key" ]; then
   fi
 fi
 
-# ── 6. Push notifications (optional) ──────────────────────────────────────────
+# ── 7. Push notifications (optional) ──────────────────────────────────────────
 
 step "Push notifications (optional)"
 
