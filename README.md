@@ -295,17 +295,16 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 ## Roadmap
 
 ### Bug fixes
-- Muting the mic clears the status badge — it should not. The badge should stay visible while Clio is working and only clear when the turn finishes.
-- The transition between "planning" and "executing" states is not always clear to the user. After Clio finishes speaking a plan, there are moments of silence where it is unclear whether Clio is actively working or waiting for a new prompt.
+- Muting the mic clears the status badge — it should not. The badge should remain visible while Clio is working and only clear when the turn finishes.
+- After Clio finishes speaking a plan and begins executing it, there are moments of silence where it is unclear whether Clio is actively working or waiting for a new prompt. The status badge and agent loop need to more reliably signal active work versus idle.
+- The status badge does not clearly distinguish "about to make an edit" (planning) from "currently making an edit" (executing), leaving the user uncertain whether Clio has started making changes yet.
 
 ### Improvements
-- Better visible browser navigation — when browser_open is called with headless=false, Clio should be able to narrate what it sees on screen more fluidly and take more natural multi-step browsing actions without needing explicit instructions for each step.
-- Improve the status badge language to distinguish between "about to edit" (planning) and "currently editing" (executing), so the user always knows whether Clio is still thinking or actively making changes.
-- Smarter sentence splitting — the current regex splits only on period/exclamation/question mark followed by whitespace, which means code identifiers, URLs, and abbreviations can cause premature splits or missed splits.
-- Whisper model selection at runtime — currently requires editing stt.py directly; could be a config option in config.sh.
+- Better visible browser navigation — when browser_open is called with headless=false, Clio should narrate what it sees on screen more fluidly and take natural multi-step browsing actions without needing explicit instructions for each step.
+- Smarter sentence splitting — the current regex splits only on period/exclamation/question mark followed by whitespace, which means version numbers, file paths, URLs, and abbreviations like "e.g." can cause premature or missed splits during TTS streaming.
+- Whisper model selection at runtime — currently requires editing stt.py directly; should be a config option in config.sh.
 - Context management for long sessions — conversation history grows without bound; add summarization or sliding-window trimming before context limits are hit.
 - Cost reporting to the phone — the SessionCostTracker already accumulates token usage per turn but only prints it to the server log; surface a session cost summary to the user on request.
-- Wake-word support — allow Clio to listen passively and activate only when it hears its name, without requiring the user to tap the mic.
 - Multi-voice TTS — allow the user to choose from multiple piper voices in config.sh without editing Python source.
 
 ### New features
