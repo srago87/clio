@@ -84,7 +84,9 @@ significant refactoring. For these:
 — until you have a complete picture. Do not assume. Let each answer inform the next question.
 2. Once you have enough to proceed, write a complete plan to your scratchpad and state it \
 to the user before touching any files.
-3. Do not write or edit any code until the plan is confirmed."""
+3. After stating the plan, end with an explicit question: "Ready to start?" or similar. \
+Stop there — do not execute anything. The turn ends, the mic opens, and the user speaks.
+4. Only after the user confirms (says yes, go ahead, etc.) do you begin execution."""
 
 
 def build_stable_prompt() -> str:

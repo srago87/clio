@@ -3,7 +3,14 @@ import os
 from pathlib import Path
 from faster_whisper import WhisperModel
 
-WHISPER_MODEL = "base"
+# Whisper model to use for speech recognition.
+# Options: tiny, base, small, medium, large
+# tiny   — fastest, least accurate
+# base   — fast, reasonable accuracy (previous default)
+# small  — good balance of speed and accuracy (recommended)
+# medium — more accurate, noticeably slower
+# large  — most accurate, slowest; not recommended on CPU
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small")
 MODELS_DIR = Path(__file__).parent / "models"
 NO_SPEECH_THRESHOLD = 0.75  # discard segments where Whisper thinks there's no speech
 

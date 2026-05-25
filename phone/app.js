@@ -160,7 +160,14 @@ function startStatusTimer(cls, label) {
 
   function tick() {
     const elapsed = Math.floor((Date.now() - statusTimerStart) / 1000);
-    const timeStr = elapsed > 0 ? ` (${elapsed}s)` : "";
+    let timeStr = "";
+    if (elapsed >= 60) {
+      const m = Math.floor(elapsed / 60);
+      const s = elapsed % 60;
+      timeStr = ` (${m}m ${s}s)`;
+    } else if (elapsed > 0) {
+      timeStr = ` (${elapsed}s)`;
+    }
     setStatus(cls, label + timeStr);
     statusBadge._timerCls = cls;
   }

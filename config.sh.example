@@ -8,6 +8,11 @@
 #
 TUNNEL_MODE="tailscale"
 
+# Whisper model for speech recognition.
+# Options: tiny, base, small (default), medium, large
+# tiny is fastest but least accurate; large is most accurate but slowest on CPU.
+WHISPER_MODEL="small"
+
 # Language for speech recognition. Set to a language code (e.g. "en") to prevent
 # Whisper from misidentifying your speech as another language. Leave empty to auto-detect.
 STT_LANGUAGE="en"
