@@ -261,6 +261,11 @@ function appendBubble(role, text) {
 
 // ── Streaming audio playback ──────────────────────────────────────────────
 function handleAudioChunk(msg) {
+  // Clear status badge as soon as first audio chunk arrives — thinking/planning is done
+  stopStatusTimer();
+  setStatus("idle", "");
+  stopWave();
+
   // Build / extend the claude bubble progressively
   if (!currentClaudeBubble) {
     currentClaudeBubble = appendBubble("claude", "");
