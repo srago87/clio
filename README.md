@@ -294,11 +294,6 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 
 ## Roadmap
 
-### Bug fixes
-- Muting the mic clears the status badge — it should not. The badge should remain visible while Clio is working and only clear when the turn finishes.
-- After Clio finishes speaking a plan and begins executing it, there are moments of silence where it is unclear whether Clio is actively working or waiting for a new prompt. The status badge and agent loop need to more reliably signal active work versus idle.
-- The status badge does not clearly distinguish "about to make an edit" (planning) from "currently making an edit" (executing), leaving the user uncertain whether Clio has started making changes yet.
-
 ### Improvements
 - Better visible browser navigation — when browser_open is called with headless=false, Clio should narrate what it sees on screen more fluidly and take natural multi-step browsing actions without needing explicit instructions for each step.
 - Smarter sentence splitting — the current regex splits only on period/exclamation/question mark followed by whitespace, which means version numbers, file paths, URLs, and abbreviations like "e.g." can cause premature or missed splits during TTS streaming.
