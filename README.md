@@ -303,6 +303,7 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 - Multi-voice TTS — allow the user to choose from multiple piper voices in config.sh without editing Python source.
 
 ### New features
+- Local WiFi access via mDNS — serve Clio at a stable `clio.local` URL on the home network with zero configuration, no Tailscale required; remote access via Tailscale or Cloudflare Tunnel remains available as an upgrade path.
 - Conversation export — let the user ask Clio to save the current session transcript to a file.
 - Notification when long tasks finish — push an ntfy.sh notification to the phone when a multi-step task completes so the user does not have to watch the screen.
 - Tool usage history panel — a collapsible log on the phone UI showing all tool calls made in the current session, beyond the single-line summaries currently shown.
