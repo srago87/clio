@@ -493,14 +493,13 @@ class AgentSession:
                 break
 
             if response.stop_reason == "tool_use":
-                await self._status("executing", "Running…")
                 await self._send({"type": "close_bubble"})
                 tool_results = await self._handle_tool_calls(response.content, client)
                 self.conversation.append({
                     "role": "user",
                     "content": tool_results,
                 })
-                await self._status("planning", "Planning…")
+                await self._status("thinking", "Thinking…")
             else:
                 break
 
@@ -570,7 +569,7 @@ class AgentSession:
                     })
                     continue
 
-            await self._status("executing", description)
+            await self._status("working", description)
             result = await asyncio.to_thread(execute_tool, block.name, block.input)
 
             # Compress memory if an explicit update_memory call pushed it over the limit
