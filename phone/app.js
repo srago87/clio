@@ -431,7 +431,7 @@ micBtn.onclick = async () => {
   if (micMuted) {
     micBtn.classList.add("muted");
     speakingGlow.classList.remove("session");
-    setStatus("idle", "");
+
     // If Clio is speaking, defer mic teardown to finishTurn() — stopping the
     // mic stream mid-playback can suspend the AudioContext on mobile.
     if (!processingExchange) {
