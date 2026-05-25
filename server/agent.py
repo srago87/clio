@@ -86,7 +86,12 @@ significant refactoring. For these:
 to the user before touching any files.
 3. After stating the plan, end with an explicit question: "Ready to start?" or similar. \
 Stop there — do not execute anything. The turn ends, the mic opens, and the user speaks.
-4. Only after the user confirms (says yes, go ahead, etc.) do you begin execution."""
+4. Only after the user confirms (says yes, go ahead, etc.) do you begin execution.
+
+## Post-Task Summary
+After completing any coding task, always give a brief spoken summary covering: which files \
+were changed and what the change does. If a server restart is required for the change to \
+take effect, say so. If no restart is needed, do not mention restarting at all."""
 
 
 def build_stable_prompt() -> str:
