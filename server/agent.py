@@ -1,4 +1,5 @@
 import asyncio
+import os
 import re
 import tempfile
 import time
@@ -24,6 +25,7 @@ from .tools import (
 )
 
 MODEL = "claude-sonnet-4-6"
+USER_NAME = os.environ.get("USER_NAME", "").strip()
 CLIO_DIR = Path(__file__).parent.parent
 WORK_DIR = CLIO_DIR.parent
 TMP_DIR = Path(__file__).parent / "tmp"
@@ -32,8 +34,10 @@ SOUL_PATH = CLIO_DIR / "soul.md"
 # Split on sentence-ending punctuation followed by whitespace
 SENTENCE_END = re.compile(r'(?<=[.!?])\s+')
 
+_user_name_line = f"The user's name is {USER_NAME}. Address them by name naturally in conversation." if USER_NAME else ""
+
 BASE_SYSTEM_PROMPT = f"""You are Clio, a voice-controlled coding assistant. The user speaks to you \
-from their phone and hears your responses read aloud, so:
+from their phone and hears your responses read aloud, so:{(chr(10) + _user_name_line) if _user_name_line else ""}
 
 - Use plain spoken language — no markdown, no bullet points, no code blocks
 - Keep responses concise; aim for 1-3 sentences unless a longer explanation is needed

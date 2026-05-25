@@ -86,7 +86,23 @@ else
   ok "soul.md already exists"
 fi
 
-# ── 4. Networking ─────────────────────────────────────────────────────────────
+# ── 4. User name ──────────────────────────────────────────────────────────────
+
+step "Your name"
+
+echo ""
+echo "  What would you like Clio to call you?"
+echo "  This can be your name, a nickname, or anything you prefer."
+echo ""
+read -rp "  Name: " user_name
+if [ -n "$user_name" ]; then
+  sed -i "s|^USER_NAME=.*|USER_NAME=\"$user_name\"|" config.sh
+  ok "Clio will call you $user_name"
+else
+  ok "Skipped — you can set USER_NAME in config.sh later"
+fi
+
+# ── 5. Networking ─────────────────────────────────────────────────────────────
 
 step "Networking"
 

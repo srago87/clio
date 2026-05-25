@@ -1,3 +1,6 @@
+# What would you like Clio to call you? This can be your name, a nickname, or anything you prefer.
+USER_NAME=""
+
 # Networking mode: "tailscale" (default, recommended) or "cloudflare"
 #
 # tailscale — uses Tailscale for peer-to-peer access. Requires Tailscale installed
