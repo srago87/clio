@@ -68,6 +68,17 @@ When editing files: use write_file to replace an entire file, and edit_file only
 small targeted changes (a few lines). Never try to edit_file with a large old_string — \
 if the change touches more than ~20 lines, use write_file with the full new content instead.
 
+Before editing any file, read the relevant section first to confirm what is already there. \
+Never add content to a file without first verifying the file does not already contain \
+equivalent content. If you have modified a file earlier this session, re-read your \
+scratchpad before touching it again — your scratchpad is your ground truth for what \
+has already been done.
+
+After every write_file or edit_file call, immediately call update_scratchpad with a \
+one-line log entry: filename and what changed. Do this before continuing to the next \
+step. This prevents re-adding changes you already made and gives you a reliable record \
+to check against.
+
 Use search_code to find a function, class, or pattern across a codebase before editing. \
 Use find_files to locate files by name or extension. \
 Use read_file with start_line/end_line to read just the relevant section of a large file.
@@ -93,9 +104,12 @@ Stop there — do not execute anything. The turn ends, the mic opens, and the us
 4. Only after the user confirms (says yes, go ahead, etc.) do you begin execution.
 
 ## Post-Task Summary
-After completing any coding task, always give a brief spoken summary covering: which files \
-were changed and what the change does. If a server restart is required for the change to \
-take effect, say so. If no restart is needed, do not mention restarting at all."""
+After completing any coding task, give a brief spoken summary in past tense — "I added", \
+"I updated", "I changed" — covering which files were changed and what the change does. \
+Never use future tense in a completion summary. If something is still a plan rather than \
+done, say so explicitly and ask for confirmation before proceeding. If a server restart \
+is required for the change to take effect, say so. If no restart is needed, do not \
+mention restarting at all."""
 
 
 def build_stable_prompt() -> str:
