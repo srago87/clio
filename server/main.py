@@ -3,6 +3,7 @@ import base64
 import logging
 import logging.handlers
 import sys
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -12,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from .agent import AgentSession, TMP_DIR, consolidate_sessions
 from .session import VoiceSession
 from .stt import reset_last_transcript
+from .tts import synthesize
 
 # Set root logger to WARNING — silences all third-party noise (httpx, httpcore, anthropic, faster_whisper, etc.)
 logging.getLogger().setLevel(logging.WARNING)
@@ -41,6 +43,18 @@ sys.stdout = _PrintToLog()
 app = FastAPI()
 
 PHONE_DIR = Path(__file__).parent.parent / "phone"
+CLIO_DIR = Path(__file__).parent.parent
+FIRST_RUN_FLAG = CLIO_DIR / ".first_run_complete"
+
+INTRO_TEXT = (
+    "Hi, I'm Clio — a voice-controlled coding assistant that lives in your development environment. "
+    "I can read and write code, run commands, search the web, and help you build things. "
+    "Just press the button and tell me what you need. "
+    "You can give me multi-step instructions, ask follow-up questions, or just think out loud — I'll keep up."
+)
+
+GREETING_TEXT = "Hey, I'm back. What are we working on?"
+
 app.mount("/static", StaticFiles(directory=str(PHONE_DIR)), name="static")
 
 
@@ -66,6 +80,22 @@ async def serve_audio(filename: str):
     return FileResponse(str(audio_path), media_type="audio/wav")
 
 
+async def _send_greeting(websocket: WebSocket):
+    """Synthesize and stream the intro or greeting audio on first connect."""
+    is_first_run = not FIRST_RUN_FLAG.exists()
+    text = INTRO_TEXT if is_first_run else GREETING_TEXT
+    wav_path = TMP_DIR / f"greeting_{uuid.uuid4().hex[:8]}.wav"
+    await asyncio.to_thread(synthesize, text, str(wav_path))
+    await websocket.send_json({
+        "type": "audio_chunk",
+        "text": text,
+        "audio_url": f"/audio/{wav_path.name}",
+    })
+    await websocket.send_json({"type": "turn_end"})
+    if is_first_run:
+        FIRST_RUN_FLAG.touch()
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -79,6 +109,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # Ask the user whether to save this session to memory
     await websocket.send_json({"type": "memory_prompt"})
+
+    # Send intro (first run) or short greeting (returning)
+    asyncio.create_task(_send_greeting(websocket))
 
     try:
         async for message in websocket.iter_json():

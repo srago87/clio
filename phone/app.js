@@ -116,6 +116,9 @@ function handleServerMessage(msg) {
     case "memory_prompt":
       showMemoryPrompt();
       break;
+    case "close_bubble":
+      currentClaudeBubble = null;
+      break;
     case "error":
       setStatus("error", "Error");
       resetTurnState();

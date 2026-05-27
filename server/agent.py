@@ -305,7 +305,7 @@ class AgentSession:
             self._pending_permission.set_result(approved)
 
     async def _ask_permission(self, tool_call_id: str, tool: str, description: str) -> bool:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._pending_permission = loop.create_future()
         self._pending_tool_id = tool_call_id
 

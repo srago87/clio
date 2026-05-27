@@ -4,6 +4,10 @@ config.sh
 # Personal Clio files — copy *.example.md versions as starting points
 memory.md
 soul.md
+journal.md
+
+# First-run tracking — created on first server start
+.first_run_complete
 
 # TLS certificates — generated per machine by start.sh
 clio.crt

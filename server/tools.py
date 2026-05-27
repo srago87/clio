@@ -30,10 +30,6 @@ AUTO_APPROVE = {
     "browser_navigate", "browser_open",
 }
 
-# Tools that require phone approval before running
-REQUIRE_APPROVAL = {"bash_command", "write_file", "edit_file", "delete_file", "run_background",
-                    "browser_open", "browser_navigate", "browser_click", "browser_type", "browser_close"}
-
 TOOL_DEFINITIONS = [
     {
         "name": "read_file",

@@ -244,6 +244,25 @@ else
   ok "Skipped"
 fi
 
+# ── 8. Whisper model download ─────────────────────────────────────────────────
+
+step "Whisper speech recognition model"
+
+source "$SCRIPT_DIR/config.sh" 2>/dev/null || true
+WHISPER_MODEL="${WHISPER_MODEL:-small}"
+MODELS_DIR="$SCRIPT_DIR/server/models"
+
+echo "  Downloading Whisper model: $WHISPER_MODEL (this may take a moment)..."
+WHISPER_MODEL="$WHISPER_MODEL" MODELS_DIR="$MODELS_DIR" .venv/bin/python3 - <<'PYEOF'
+import os
+from pathlib import Path
+from faster_whisper import WhisperModel
+model_name = os.environ.get("WHISPER_MODEL", "small")
+models_dir = Path(os.environ.get("MODELS_DIR", "server/models"))
+WhisperModel(model_name, compute_type="int8", download_root=str(models_dir))
+PYEOF
+ok "Whisper model ready"
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 echo ""
