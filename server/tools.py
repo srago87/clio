@@ -1,10 +1,15 @@
 import glob as glob_module
+import ipaddress
 import os
 import subprocess
 import time
+import urllib.parse
 import requests
 from datetime import datetime
 from pathlib import Path
+
+_CLIO_DIR = Path(__file__).parent.parent
+_WORK_DIR = _CLIO_DIR.parent
 
 from .jobs import job_manager
 from .browser import (
@@ -622,7 +627,7 @@ def _list_directory(path: str) -> str:
 
 
 def _search_code(pattern: str, path: str = "", file_pattern: str = "") -> str:
-    search_path = str(Path(path).expanduser() if path else Path.home() / "claude")
+    search_path = str(Path(path).expanduser() if path else _WORK_DIR)
     cmd = ["grep", "-rn", "--color=never", "-E"]
     if file_pattern:
         cmd.extend(["--include", file_pattern])
@@ -644,7 +649,7 @@ def _search_code(pattern: str, path: str = "", file_pattern: str = "") -> str:
 
 
 def _find_files(pattern: str, path: str = "") -> str:
-    search_path = Path(path).expanduser() if path else Path.home() / "claude"
+    search_path = Path(path).expanduser() if path else _WORK_DIR
     matches = glob_module.glob(str(search_path / "**" / pattern), recursive=True)
     filtered = [
         m for m in matches
@@ -707,7 +712,7 @@ def _run_background(command: str, cwd: str | None = None) -> str:
 
 
 def _bash_command(command: str, cwd: str | None = None) -> str:
-    work_dir = Path(cwd).expanduser() if cwd else Path.home() / "claude"
+    work_dir = Path(cwd).expanduser() if cwd else _WORK_DIR
     result = subprocess.run(
         command,
         shell=True,
@@ -762,7 +767,19 @@ def _web_search(query: str) -> str:
     return "\n\n".join(results)
 
 
+def _is_private_url(url: str) -> bool:
+    try:
+        host = urllib.parse.urlparse(url).hostname or ""
+        if host.lower() in ("localhost",):
+            return True
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        return False
+
+
 def _read_url(url: str) -> str:
+    if _is_private_url(url):
+        return "Error: fetching private or local addresses is not allowed."
     from bs4 import BeautifulSoup
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Clio/1.0)"}
     resp = requests.get(url, timeout=15, headers=headers)

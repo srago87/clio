@@ -2,18 +2,21 @@ import asyncio
 import base64
 import logging
 import logging.handlers
+import secrets
 import sys
 import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .agent import AgentSession, TMP_DIR, consolidate_sessions
 from .session import VoiceSession
 from .stt import reset_last_transcript
 from .tts import synthesize
+
+SESSION_TOKEN = secrets.token_hex(16)
 
 # Set root logger to WARNING — silences all third-party noise (httpx, httpcore, anthropic, faster_whisper, etc.)
 logging.getLogger().setLevel(logging.WARNING)
@@ -60,7 +63,10 @@ app.mount("/static", StaticFiles(directory=str(PHONE_DIR)), name="static")
 
 @app.get("/")
 async def serve_index():
-    return FileResponse(str(PHONE_DIR / "index.html"))
+    html = (PHONE_DIR / "index.html").read_text()
+    script = f'<script>window.CLIO_TOKEN="{SESSION_TOKEN}";</script>'
+    html = html.replace("</head>", f"{script}\n</head>", 1)
+    return HTMLResponse(html)
 
 
 @app.get("/apple-touch-icon.png")
@@ -98,14 +104,16 @@ async def _send_greeting(websocket: WebSocket):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    token = websocket.query_params.get("token", "")
+    if token != SESSION_TOKEN:
+        await websocket.close(code=4403)
+        return
+
     await websocket.accept()
     reset_last_transcript()  # clear cross-session priming so hallucinations get filtered
     voice_session = VoiceSession()
     agent = AgentSession(websocket, voice_session)
     processing_task: asyncio.Task | None = None
-
-    # Consolidate past session logs into memory in the background
-    asyncio.create_task(consolidate_sessions(current_log_path=voice_session.log_path))
 
     # Ask the user whether to save this session to memory
     await websocket.send_json({"type": "memory_prompt"})
@@ -134,6 +142,9 @@ async def websocket_endpoint(websocket: WebSocket):
             elif msg_type == "memory_prompt_response":
                 agent.memory_enabled = message.get("enabled", False)
                 print(f"[agent] memory_enabled={agent.memory_enabled}")
+                # Only consolidate past sessions if user opted into memory
+                if agent.memory_enabled:
+                    asyncio.create_task(consolidate_sessions(current_log_path=voice_session.log_path))
 
     except WebSocketDisconnect:
         pass
@@ -142,3 +153,6 @@ async def websocket_endpoint(websocket: WebSocket):
             processing_task.cancel()
         agent.log_cost()
         voice_session.end()
+        # If memory is disabled, delete the session log so nothing is consolidated later
+        if not agent.memory_enabled:
+            voice_session.log_path.unlink(missing_ok=True)

@@ -62,7 +62,8 @@ const speakingGlow     = document.getElementById("speaking-glow");
 // ── WebSocket ─────────────────────────────────────────────────────────────
 function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  const token = encodeURIComponent(window.CLIO_TOKEN || "");
+  ws = new WebSocket(`${proto}//${location.host}/ws?token=${token}`);
 
   ws.onopen = () => {
     if (connectingMsg.parentNode) connectingMsg.remove();

@@ -373,7 +373,8 @@ class AgentSession:
             print(f"[agent] turn complete ({len(response_text)} chars)")
 
             # 3. Log + signal end of turn so phone re-enables mic
-            self.voice_session.add_exchange(transcript, response_text)
+            if self.memory_enabled:
+                self.voice_session.add_exchange(transcript, response_text)
             await self._send({"type": "turn_end"})
 
             # 4. Async memory extraction (non-blocking, best-effort)

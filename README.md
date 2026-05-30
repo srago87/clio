@@ -128,7 +128,7 @@ To persist it across terminal sessions, add it to your shell profile. Replace `s
 echo 'export ANTHROPIC_API_KEY=sk-ant-...' >> ~/.bashrc && source ~/.bashrc
 ```
 
-If you're using zsh (default on macOS), use `~/.zshrc` instead of `~/.bashrc`.
+If you're using zsh, use `~/.zshrc` instead of `~/.bashrc`.
 
 ### 5. Start
 
@@ -285,7 +285,7 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 
 ## Limitations
 
-- **ARM64 Linux only tested** — runs on Apple Silicon Mac and ARM64 Linux. x86 should work but is untested.
+- **ARM64 Linux only tested** — x86 Linux should work but is untested. macOS and Windows are not supported.
 - **TLS cert setup is Tailscale-specific** — if using Cloudflare Tunnel, cert provisioning is handled differently. Contributions welcome for other networking setups.
 - **No conversation branching** — conversation history grows linearly with no summarization strategy. Very long sessions will eventually approach context limits.
 - **piper-tts voices** — the default voice (lessac-medium) is clear but robotic. Other voices available at [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices).
@@ -308,7 +308,7 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 - Notification when long tasks finish — push an ntfy.sh notification to the phone when a multi-step task completes so the user does not have to watch the screen.
 - Tool usage history panel — a collapsible log on the phone UI showing all tool calls made in the current session, beyond the single-line summaries currently shown.
 - ARM and x86 Docker image — make setup truly one-command on any Linux host.
-- Cross-platform support — extend Clio to run on macOS and Windows, not just Linux.
+- macOS and Windows support — Clio is currently Linux-only.
 - Multi-LLM support — allow users to configure alternative LLM backends (OpenAI, Gemini, local models via Ollama, etc.) instead of being locked to the Anthropic Claude API.
 
 ---

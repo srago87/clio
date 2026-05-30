@@ -15,6 +15,8 @@ step() { echo -e "\n${BOLD}${CYAN}▸ $1${NC}"; }
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 warn() { echo -e "  ${YELLOW}!${NC} $1"; }
 err()  { echo -e "  ${RED}✗${NC} $1"; exit 1; }
+# Cross-platform sed -i (GNU requires no suffix, BSD requires empty string suffix)
+sed_i() { sed -i.bak "$1" "$2" && rm -f "$2.bak"; }
 
 echo -e "\n${BOLD}Clio — Install${NC}"
 echo "────────────────────────────────────────"
@@ -96,7 +98,7 @@ echo "  This can be your name, a nickname, or anything you prefer."
 echo ""
 read -rp "  Name: " user_name
 if [ -n "$user_name" ]; then
-  sed -i "s|^USER_NAME=.*|USER_NAME=\"$user_name\"|" config.sh
+  sed_i "s|^USER_NAME=.*|USER_NAME=\"$user_name\"|" config.sh
   ok "Clio will call you $user_name"
 else
   ok "Skipped — you can set USER_NAME in config.sh later"
@@ -126,7 +128,7 @@ while true; do
   esac
 done
 
-sed -i "s|^TUNNEL_MODE=.*|TUNNEL_MODE=\"$TUNNEL_MODE\"|" config.sh
+sed_i "s|^TUNNEL_MODE=.*|TUNNEL_MODE=\"$TUNNEL_MODE\"|" config.sh
 
 if [ "$TUNNEL_MODE" = "tailscale" ]; then
   echo ""
@@ -138,7 +140,7 @@ if [ "$TUNNEL_MODE" = "tailscale" ]; then
     [ -n "$ts_host" ] && break
     echo "  Hostname cannot be empty."
   done
-  sed -i "s|^TAILSCALE_HOST=.*|TAILSCALE_HOST=\"$ts_host\"|" config.sh
+  sed_i "s|^TAILSCALE_HOST=.*|TAILSCALE_HOST=\"$ts_host\"|" config.sh
   ok "Tailscale configured"
 else
   if ! command -v cloudflared &>/dev/null; then
@@ -182,7 +184,7 @@ while true; do
   esac
 done
 
-sed -i "s|^STT_LANGUAGE=.*|STT_LANGUAGE=\"$STT_LANGUAGE\"|" config.sh
+sed_i "s|^STT_LANGUAGE=.*|STT_LANGUAGE=\"$STT_LANGUAGE\"|" config.sh
 ok "Language set to $STT_LANGUAGE"
 
 # ── 6. Anthropic API key ──────────────────────────────────────────────────────
@@ -238,7 +240,7 @@ echo ""
 read -rp "  ntfy.sh topic: " ntfy_topic
 
 if [ -n "$ntfy_topic" ]; then
-  sed -i "s|^NTFY_TOPIC=.*|NTFY_TOPIC=\"$ntfy_topic\"|" config.sh
+  sed_i "s|^NTFY_TOPIC=.*|NTFY_TOPIC=\"$ntfy_topic\"|" config.sh
   ok "ntfy.sh configured"
 else
   ok "Skipped"

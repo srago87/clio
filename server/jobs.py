@@ -3,6 +3,7 @@ import uuid
 from pathlib import Path
 
 TMP_DIR = Path(__file__).parent / "tmp"
+_WORK_DIR = Path(__file__).parent.parent.parent
 
 
 class BackgroundJobManager:
@@ -10,7 +11,7 @@ class BackgroundJobManager:
         self._jobs: dict[str, dict] = {}
 
     def start(self, command: str, cwd: str | None = None) -> str:
-        work_dir = Path(cwd).expanduser() if cwd else Path.home() / "claude"
+        work_dir = Path(cwd).expanduser() if cwd else _WORK_DIR
         TMP_DIR.mkdir(exist_ok=True)
 
         job_id = uuid.uuid4().hex[:8]
