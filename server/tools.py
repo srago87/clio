@@ -591,9 +591,29 @@ READ_LIMIT = 50_000
 BASH_OUTPUT_LIMIT = 10_000
 _SEARCH_IGNORE_DIRS = {".venv", "__pycache__", "node_modules", ".git", "dist", "build"}
 
+_SENSITIVE_PREFIXES = [
+    Path.home() / ".ssh",
+    Path.home() / ".aws",
+    Path.home() / ".gnupg",
+    Path.home() / ".config" / "gcloud",
+]
+
+
+def _is_safe_path(path: Path) -> bool:
+    resolved = path.expanduser().resolve()
+    for sensitive in _SENSITIVE_PREFIXES:
+        try:
+            resolved.relative_to(sensitive.resolve())
+            return False
+        except ValueError:
+            pass
+    return True
+
 
 def _read_file(path: str, start_line: int | None = None, end_line: int | None = None) -> str:
     p = Path(path).expanduser()
+    if not _is_safe_path(p):
+        return f"Error: access to {path} is not allowed"
     content = p.read_text()
 
     if start_line is not None or end_line is not None:
@@ -614,6 +634,8 @@ def _read_file(path: str, start_line: int | None = None, end_line: int | None = 
 
 def _list_directory(path: str) -> str:
     p = Path(path).expanduser()
+    if not _is_safe_path(p):
+        return f"Error: access to {path} is not allowed"
     entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name))
     lines = []
     for entry in entries:
@@ -662,6 +684,8 @@ def _find_files(pattern: str, path: str = "") -> str:
 
 def _write_file(path: str, content: str) -> str:
     p = Path(path).expanduser()
+    if not _is_safe_path(p):
+        return f"Error: access to {path} is not allowed"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content)
     return f"Wrote {len(content)} bytes to {path}"
@@ -669,6 +693,8 @@ def _write_file(path: str, content: str) -> str:
 
 def _edit_file(path: str, old_string: str, new_string: str) -> str:
     p = Path(path).expanduser()
+    if not _is_safe_path(p):
+        return f"Error: access to {path} is not allowed"
     content = p.read_text()
 
     # Exact match
@@ -733,6 +759,8 @@ def _bash_command(command: str, cwd: str | None = None) -> str:
 
 def _delete_file(path: str) -> str:
     p = Path(path).expanduser()
+    if not _is_safe_path(p):
+        return f"Error: access to {path} is not allowed"
     p.unlink()
     return f"Deleted {path}"
 

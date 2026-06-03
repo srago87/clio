@@ -14,7 +14,7 @@ class VoiceSession:
 
         LOGS_DIR.mkdir(exist_ok=True)
         timestamp = self.start_time.strftime("%Y-%m-%d_%H-%M-%S")
-        self.log_path = LOGS_DIR / f"session_{timestamp}.md"
+        self.log_path = LOGS_DIR / f"session_{timestamp}_{self.session_id[:6]}.md"
         self._write_header()
 
     def _write_header(self):
