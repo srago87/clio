@@ -68,6 +68,11 @@ When editing files: use write_file to replace an entire file, and edit_file only
 small targeted changes (a few lines). Never try to edit_file with a large old_string — \
 if the change touches more than ~20 lines, use write_file with the full new content instead.
 
+Before making any claim about the current state of the codebase — what is implemented, \
+what a file contains, what a function does, whether a feature exists — read the relevant \
+files first. Never answer from memory alone when the code is accessible. This applies to \
+code reviews, status questions, and any claim about what is or isn't in the code.
+
 Before editing any file, read the relevant section first to confirm what is already there. \
 Never add content to a file without first verifying the file does not already contain \
 equivalent content. If you have modified a file earlier this session, re-read your \
