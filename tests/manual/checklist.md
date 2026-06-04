@@ -200,8 +200,8 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 *Tests: the `working` status state (renamed from `executing` in d3dda68)*
 
 - [ ] **Say:** "Search the web for Python asyncio documentation"
-  - **Expect:** `Thinking…` while Claude decides to search, then `Working…` with a label like "web_search" while the request is in flight (several seconds — long enough to read the badge clearly)
-  - **Verify:** Badge reads **"Working…"** (not "Executing…") with a label and elapsed timer
+  - **Expect:** `Thinking…` while Claude decides to search, then a badge showing the search description (e.g. "search the web for Python asyncio documentation") with an elapsed timer while the request is in flight
+  - **Verify:** Badge shows a description and timer — and does **not** read "Executing…" (which would mean the old state name is still in use)
 
 ---
 
