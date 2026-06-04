@@ -14,7 +14,7 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
    > "Please make a scratchpad note: the test workspace for this session
    > is at tests slash manual slash workspace"
 
-   Expect: Clio confirms the note and the `Working…` badge appears briefly for `update_scratchpad`.
+   Expect: Clio confirms the note. No `Working…` badge — `update_scratchpad` is handled inline and skips the status entirely.
 
    **Verify in Terminal 2** that the workspace exists at the right path:
    ```bash
@@ -161,7 +161,7 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 *Tests: sequential tool use — read then edit*
 
 - [ ] **Say:** "Read tests slash manual slash workspace slash notes dot txt, then add a new line at the end that says 'Action items reviewed'"
-  - **Expect:** Clio reads the file first (auto-approved, `Working…` badge), then requests approval to edit
+  - **Expect:** Clio reads the file first (auto-approved, `Working…` may flash too briefly to see), then requests approval to edit
   - **Tap Approve**
   - **Verify:** Last line of `notes.txt` is `Action items reviewed`
 
