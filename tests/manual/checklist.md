@@ -40,7 +40,7 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 
 - [ ] **Say:** "Read the file at tests slash manual slash workspace slash hello dot py"
   - **Expect:** Clio reads it and describes two functions: `greet` and `farewell`.
-  - **Verify:** Status shows `Working…` with a label like "read hello.py" while it runs.
+  - **Note:** `Working…` fires but may flash too briefly to see on a small file — that's expected. Test 15 uses a slower operation to verify the badge properly.
 
 ---
 
@@ -199,7 +199,8 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 
 *Tests: the `working` status state (renamed from `executing` in d3dda68)*
 
-- [ ] Repeat any tool-use test above and watch the status badge while the tool runs
+- [ ] **Say:** "Search the web for Python asyncio documentation"
+  - **Expect:** `Thinking…` while Claude decides to search, then `Working…` with a label like "web_search" while the request is in flight (several seconds — long enough to read the badge clearly)
   - **Verify:** Badge reads **"Working…"** (not "Executing…") with a label and elapsed timer
 
 ---
