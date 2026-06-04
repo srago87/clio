@@ -63,10 +63,9 @@ All messages are JSON.
 |-------|---------|
 | `transcribing` | Converting audio to text |
 | `thinking` | Waiting for Claude API response |
-| `executing` | Running a tool |
-| `waiting_permission` | Waiting for phone approval |
+| `working` | Running a tool (label includes tool name and elapsed time) |
 
-Note: there is no `speaking` state sent to the phone — the user can already hear it. The status badge hides when idle and while muted.
+Note: there is no `speaking` state sent to the phone — the user can already hear it. The status badge hides when idle and while muted. Permission requests are handled via a separate `permission_request` message type, not a status state.
 
 ---
 
@@ -133,7 +132,7 @@ If both fail, returns an error indicating whether the first line was found (cont
 
 ## Speech-to-text (`server/stt.py`)
 
-Uses faster-whisper with the `base` model by default. Key settings:
+Uses faster-whisper with the `small` model by default (configurable via `WHISPER_MODEL` in `config.sh`). Key settings:
 
 | Setting | Value | Reason |
 |---------|-------|--------|

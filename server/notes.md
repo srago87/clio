@@ -16,7 +16,16 @@ Tracks a single voice session. Writes a timestamped markdown log file of every e
 Speech to text. Uses the Whisper model (via faster-whisper) to transcribe audio recordings into text, with voice activity detection to filter out silence and breathing.
 
 ## tools.py
-Defines all the tools Clio can use. Specifies which tools are auto-approved and which require phone approval, provides human-readable descriptions for permission prompts, and implements each tool (read file, write file, edit file, bash command, delete file, update memory, restart server).
+Defines all the tools Clio can use. Specifies which tools are auto-approved and which require phone approval, provides human-readable descriptions for permission prompts, and implements each tool.
 
 ## tts.py
 Text to speech. Uses the Piper voice model to synthesize spoken audio from text and write it to a WAV file.
+
+## browser.py
+Playwright browser automation wrapper. Manages a single browser instance and exposes open, navigate, click, type, screenshot, get_content, get_elements, and close operations for use as Clio tools.
+
+## jobs.py
+Background process manager. Runs shell commands as subprocesses that survive phone disconnects, with log file tailing via check_job and graceful termination via stop_job.
+
+## cost.py
+Token usage tracking and cost calculation. Accumulates input/output/cache token counts per session and prints per-turn cost summaries to the server log.

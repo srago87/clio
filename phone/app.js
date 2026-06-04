@@ -428,7 +428,7 @@ function resolvePermission(approved) {
   }));
   pendingPermissionId = null;
   permOverlay.classList.remove("visible");
-  setStatus("executing", "Running…");
+  setStatus("working", "Running…");
 }
 
 btnApprove.onclick = () => resolvePermission(true);
