@@ -9,12 +9,18 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 1. `./tests/manual/reset.sh` — restore fixture files to known state
 2. `./start.sh` — start the server
 3. Open URL on phone, tap mic to begin
-4. **Orient Clio** — say this first so it knows where to look for the rest of the session:
+4. **Orient Clio** — say this first. Use the relative path (`tests/manual/workspace`) rather than the absolute path — Whisper capitalizes proper-noun-sounding words like "Sean", "Claude", and "Clio", which breaks case-sensitive Linux paths.
 
-   > "I'm running through a test script. The test workspace is at
-   > /home/sean/claude/clio/tests/manual/workspace"
+   > "Please make a scratchpad note: the test workspace for this session
+   > is at tests slash manual slash workspace"
 
-   Expect: Clio acknowledges and keeps this in its scratchpad.
+   Expect: Clio confirms the note and the `Working…` badge appears briefly for `update_scratchpad`.
+
+   **Verify in Terminal 2** that the workspace exists at the right path:
+   ```bash
+   ls tests/manual/workspace/
+   ```
+   You should see: `config.json  hello.py  notes.txt  subdir`
 
 ---
 
@@ -32,8 +38,8 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 
 *Tests: `read_file` (auto-approved)*
 
-- [ ] **Say:** "Read hello dot py from the test workspace"
-  - **Expect:** Clio reads the file and describes its contents — two functions, `greet` and `farewell`.
+- [ ] **Say:** "Read the file at tests slash manual slash workspace slash hello dot py"
+  - **Expect:** Clio reads it and describes two functions: `greet` and `farewell`.
   - **Verify:** Status shows `Working…` with a label like "read hello.py" while it runs.
 
 ---
@@ -42,7 +48,7 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 
 *Tests: `list_directory` (auto-approved)*
 
-- [ ] **Say:** "List the files in the test workspace"
+- [ ] **Say:** "List the files in tests slash manual slash workspace"
   - **Expect:** Clio lists `hello.py`, `notes.txt`, `config.json`, and `subdir`.
   - **Verify:** All four entries mentioned in the response.
 
@@ -52,7 +58,7 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 
 *Tests: `search_code` (auto-approved)*
 
-- [ ] **Say:** "Find all function definitions in hello dot py in the test workspace"
+- [ ] **Say:** "Find all function definitions in tests slash manual slash workspace slash hello dot py"
   - **Expect:** Clio finds and names both `greet` and `farewell`.
   - **Verify:** Both function names are spoken.
 
@@ -62,7 +68,7 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 
 *Tests: `find_files` (auto-approved)*
 
-- [ ] **Say:** "Find all Python files in the test workspace"
+- [ ] **Say:** "Find all Python files in tests slash manual slash workspace"
   - **Expect:** Clio returns `hello.py` only.
   - **Verify:** One result, correct filename.
 
@@ -82,7 +88,7 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 
 *Tests: `write_file` permission flow (approve path)*
 
-- [ ] **Say:** "Create a file called output dot txt in the test workspace with the text 'test passed'"
+- [ ] **Say:** "Create a file at tests slash manual slash workspace slash output dot txt with the text 'test passed'"
   - **Expect:** Permission overlay appears on phone: "Create output.txt"
   - **Tap Approve**
   - **Verify:** `tests/manual/workspace/output.txt` exists and contains `test passed`
@@ -97,7 +103,7 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 
 *Tests: `edit_file` permission flow (approve path)*
 
-- [ ] **Say:** "In notes dot txt in the test workspace, replace 'Project Alpha' with 'Project Beta'"
+- [ ] **Say:** "In tests slash manual slash workspace slash notes dot txt, replace 'Project Alpha' with 'Project Beta'"
   - **Expect:** Permission overlay appears
   - **Tap Approve**
   - **Verify:** First line of `notes.txt` now reads `Meeting notes - Project Beta`
@@ -112,7 +118,7 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 
 *Tests: `edit_file` permission flow (deny path)*
 
-- [ ] **Say:** "In config dot json in the test workspace, change debug to true"
+- [ ] **Say:** "In tests slash manual slash workspace slash config dot json, change debug to true"
   - **Expect:** Permission overlay appears
   - **Tap Deny**
   - **Expect:** Clio confirms the action was cancelled
@@ -139,7 +145,7 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 
 *Tests: `delete_file` permission flow*
 
-- [ ] **Say:** "Delete output dot txt from the test workspace"
+- [ ] **Say:** "Delete tests slash manual slash workspace slash output dot txt"
   - **Expect:** Permission overlay appears
   - **Tap Approve**
   - **Verify:** `output.txt` is gone
@@ -154,7 +160,7 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 
 *Tests: sequential tool use — read then edit*
 
-- [ ] **Say:** "Read notes dot txt in the test workspace, then add a new line at the end that says 'Action items reviewed'"
+- [ ] **Say:** "Read tests slash manual slash workspace slash notes dot txt, then add a new line at the end that says 'Action items reviewed'"
   - **Expect:** Clio reads the file first (auto-approved, `Working…` badge), then requests approval to edit
   - **Tap Approve**
   - **Verify:** Last line of `notes.txt` is `Action items reviewed`
