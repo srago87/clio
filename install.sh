@@ -131,17 +131,39 @@ done
 sed_i "s|^TUNNEL_MODE=.*|TUNNEL_MODE=\"$TUNNEL_MODE\"|" config.sh
 
 if [ "$TUNNEL_MODE" = "tailscale" ]; then
-  echo ""
-  echo "  Run 'tailscale status' to find your Tailscale hostname."
-  echo "  It looks like: your-machine.tail12345.ts.net"
-  echo ""
-  while true; do
-    read -rp "  Tailscale hostname: " ts_host
-    [ -n "$ts_host" ] && break
-    echo "  Hostname cannot be empty."
-  done
+  if ! command -v tailscale &>/dev/null; then
+    echo "  Installing Tailscale..."
+    curl -fsSL https://tailscale.com/install.sh | sh
+    ok "Tailscale installed"
+  else
+    ok "Tailscale already installed"
+  fi
+
+  if ! tailscale ip &>/dev/null; then
+    echo ""
+    echo "  Connect this machine to your Tailscale account."
+    echo "  A browser link will appear below — open it to authenticate."
+    echo ""
+    sudo tailscale up
+    ok "Tailscale connected"
+  else
+    ok "Tailscale already connected"
+  fi
+
+  ts_host=$(tailscale status --json 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['Self']['DNSName'].rstrip('.'))" 2>/dev/null || true)
+  if [ -z "$ts_host" ]; then
+    echo ""
+    echo "  Could not detect hostname automatically."
+    echo "  Run 'tailscale status' to find it — looks like: your-machine.tail12345.ts.net"
+    echo ""
+    while true; do
+      read -rp "  Tailscale hostname: " ts_host
+      [ -n "$ts_host" ] && break
+      echo "  Hostname cannot be empty."
+    done
+  fi
   sed_i "s|^TAILSCALE_HOST=.*|TAILSCALE_HOST=\"$ts_host\"|" config.sh
-  ok "Tailscale configured"
+  ok "Tailscale configured: $ts_host"
 else
   if ! command -v cloudflared &>/dev/null; then
     warn "cloudflared not found. Install it before running ./start.sh:"
