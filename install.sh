@@ -133,7 +133,8 @@ sed_i "s|^TUNNEL_MODE=.*|TUNNEL_MODE=\"$TUNNEL_MODE\"|" config.sh
 if [ "$TUNNEL_MODE" = "tailscale" ]; then
   if ! command -v tailscale &>/dev/null; then
     echo "  Installing Tailscale..."
-    curl -fsSL https://tailscale.com/install.sh | sh
+    wget -qO- https://tailscale.com/install.sh | sh
+    command -v tailscale &>/dev/null || err "Tailscale installation failed. Install it manually: https://tailscale.com/download"
     ok "Tailscale installed"
   else
     ok "Tailscale already installed"
