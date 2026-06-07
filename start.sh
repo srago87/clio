@@ -82,18 +82,26 @@ fi
 URL="https://$TAILSCALE_HOST:8765"
 
 # Provision TLS cert — try writing directly to the project dir first.
-# Falls back to the snap sandbox dir for snap-installed Tailscale.
+# Falls back to /tmp/ for snap-installed Tailscale, which can't write to arbitrary paths.
+CERT_OK=false
 if tailscale cert --cert-file "$SCRIPT_DIR/clio.crt" --key-file "$SCRIPT_DIR/clio.key" "$TAILSCALE_HOST" 2>/dev/null; then
-  : # success
+  CERT_OK=true
 else
-  SNAP_CERT_DIR="$HOME/snap/tailscale/common"
-  if tailscale cert --cert-file "$SNAP_CERT_DIR/clio.crt" --key-file "$SNAP_CERT_DIR/clio.key" "$TAILSCALE_HOST" 2>/dev/null; then
-    cp "$SNAP_CERT_DIR/clio.crt" "$SCRIPT_DIR/clio.crt"
-    cp "$SNAP_CERT_DIR/clio.key" "$SCRIPT_DIR/clio.key"
-  else
-    echo "Error: could not provision TLS cert. Check that TAILSCALE_HOST in config.sh matches your machine's Tailscale hostname."
-    exit 1
+  TMP_CERT_DIR=$(mktemp -d)
+  CERT_ERR=$(tailscale cert --cert-file "$TMP_CERT_DIR/clio.crt" --key-file "$TMP_CERT_DIR/clio.key" "$TAILSCALE_HOST" 2>&1)
+  if [ $? -eq 0 ]; then
+    cp "$TMP_CERT_DIR/clio.crt" "$SCRIPT_DIR/clio.crt"
+    cp "$TMP_CERT_DIR/clio.key" "$SCRIPT_DIR/clio.key"
+    CERT_OK=true
   fi
+  rm -rf "$TMP_CERT_DIR"
+fi
+
+if ! $CERT_OK; then
+  echo "Error: could not provision TLS cert."
+  echo "  Tailscale error: $CERT_ERR"
+  echo "  Check that TAILSCALE_HOST in config.sh matches your machine's Tailscale hostname."
+  exit 1
 fi
 
 echo "Starting Clio..."
