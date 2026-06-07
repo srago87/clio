@@ -165,6 +165,9 @@ if [ "$TUNNEL_MODE" = "tailscale" ]; then
   fi
   sed_i "s|^TAILSCALE_HOST=.*|TAILSCALE_HOST=\"$ts_host\"|" config.sh
   ok "Tailscale configured: $ts_host"
+
+  sudo tailscale set --operator="$USER"
+  ok "Tailscale operator set ($USER can provision TLS certs)"
 else
   if ! command -v cloudflared &>/dev/null; then
     warn "cloudflared not found. Install it before running ./start.sh:"
