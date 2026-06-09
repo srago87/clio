@@ -107,7 +107,7 @@ cp soul.example.md soul.md
 Edit `config.sh` and set your networking option:
 
 **Option A — Tailscale (for real use):**
-Set `TUNNEL_MODE=tailscale` and fill in your `TAILSCALE_HOST`. Tailscale must be installed and connected on both your server and phone. `start.sh` provisions a TLS cert automatically via `tailscale cert`. This gives you a stable URL, a working PWA, and keeps your audio traffic on your local network. This is the only option that works well for repeated daily use.
+[Tailscale](https://tailscale.com) is a free VPN app that creates a private network between your devices. Install it on your server and your phone ([tailscale.com/download](https://tailscale.com/download)), sign in with the same account on both, and make sure both show as connected in the Tailscale app before proceeding. Then set `TUNNEL_MODE=tailscale` and fill in your `TAILSCALE_HOST`. `start.sh` provisions a TLS cert automatically via `tailscale cert`. This gives you a stable URL, a working PWA, and keeps your audio traffic on your local network. This is the only option that works well for repeated daily use.
 
 **Option B — Cloudflare Tunnel (just trying it out):**
 Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), then set `TUNNEL_MODE=cloudflare`. No Tailscale or cert setup needed — good for a quick test without committing to Tailscale. The URL changes on each restart, so PWA installation won't persist and you'll need to open a new URL in the browser every time you start Clio.
