@@ -81,20 +81,24 @@ fi
 
 URL="https://$TAILSCALE_HOST:8765"
 
-# Provision TLS cert — try writing directly to the project dir first.
-# Falls back to /tmp/ for snap-installed Tailscale, which can't write to arbitrary paths.
+# Provision TLS cert. Snap-confined Tailscale can't write to arbitrary paths, so we try:
+#   1. Direct write to project dir (works for non-snap Tailscale)
+#   2. sudo tailscale cert (bypasses snap confinement)
+#   3. ~/snap/tailscale/common/ (snap's own writable data dir)
 CERT_OK=false
 if tailscale cert --cert-file "$SCRIPT_DIR/clio.crt" --key-file "$SCRIPT_DIR/clio.key" "$TAILSCALE_HOST" 2>/dev/null; then
   CERT_OK=true
+elif sudo tailscale cert --cert-file "$SCRIPT_DIR/clio.crt" --key-file "$SCRIPT_DIR/clio.key" "$TAILSCALE_HOST" 2>/dev/null; then
+  sudo chown "$(id -u):$(id -g)" "$SCRIPT_DIR/clio.crt" "$SCRIPT_DIR/clio.key" 2>/dev/null
+  CERT_OK=true
 else
-  TMP_CERT_DIR=$(mktemp -d)
-  CERT_ERR=$(tailscale cert --cert-file "$TMP_CERT_DIR/clio.crt" --key-file "$TMP_CERT_DIR/clio.key" "$TAILSCALE_HOST" 2>&1)
+  SNAP_CERT_DIR="$HOME/snap/tailscale/common"
+  CERT_ERR=$(tailscale cert --cert-file "$SNAP_CERT_DIR/clio.crt" --key-file "$SNAP_CERT_DIR/clio.key" "$TAILSCALE_HOST" 2>&1)
   if [ $? -eq 0 ]; then
-    cp "$TMP_CERT_DIR/clio.crt" "$SCRIPT_DIR/clio.crt"
-    cp "$TMP_CERT_DIR/clio.key" "$SCRIPT_DIR/clio.key"
+    cp "$SNAP_CERT_DIR/clio.crt" "$SCRIPT_DIR/clio.crt"
+    cp "$SNAP_CERT_DIR/clio.key" "$SCRIPT_DIR/clio.key"
     CERT_OK=true
   fi
-  rm -rf "$TMP_CERT_DIR"
 fi
 
 if ! $CERT_OK; then
