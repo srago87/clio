@@ -278,9 +278,11 @@ function handleAudioChunk(msg) {
   currentClaudeBubble.textContent += sep + msg.text;
   conversation.scrollTop = conversation.scrollHeight;
 
-  // Queue and start playback
+  // Queue and start playback.
+  // If AudioContext isn't ready yet (user hasn't tapped mic), hold the chunk
+  // in the queue — setupMic() will kick off playback once the context exists.
   audioQueue.push(msg.audio_url);
-  if (!audioIsPlaying) playNextChunk();
+  if (!audioIsPlaying && audioContext) playNextChunk();
 }
 
 function handleTurnEnd() {
@@ -573,6 +575,9 @@ async function setupMic() {
     warmUp.buffer = audioContext.createBuffer(1, 1, audioContext.sampleRate);
     warmUp.connect(audioContext.destination);
     warmUp.start(0);
+
+    // Drain any greeting chunks that arrived before the AudioContext was ready
+    if (audioQueue.length > 0 && !audioIsPlaying) playNextChunk();
 
     micSourceNode = audioContext.createMediaStreamSource(audioStream);
     analyser = audioContext.createAnalyser();
