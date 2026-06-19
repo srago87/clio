@@ -31,3 +31,14 @@ export ANTHROPIC_API_KEY=""
 # Your ntfy.sh topic for push notifications to your phone (optional).
 # Create a topic at ntfy.sh and paste it here. Leave empty to disable.
 NTFY_TOPIC=""
+
+# TTS engine: "kokoro" (default, higher quality) or "piper" (fallback)
+TTS_ENGINE="kokoro"
+
+# Kokoro voice to use. Only applies when TTS_ENGINE=kokoro.
+# American English (female): af_bella (recommended), af_heart, af_nicole, af_sarah, af_sky
+# American English (male):   am_michael, am_fenrir, am_puck, am_adam
+# British English (female):  bf_emma, bf_isabella, bf_alice, bf_lily
+# British English (male):    bm_george, bm_fable, bm_daniel, bm_lewis
+# See full list: https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
+KOKORO_VOICE="af_bella"

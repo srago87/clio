@@ -79,10 +79,15 @@ equivalent content. If you have modified a file earlier this session, re-read yo
 scratchpad before touching it again — your scratchpad is your ground truth for what \
 has already been done.
 
-After every write_file or edit_file call, immediately call update_scratchpad with a \
-one-line log entry: filename and what changed. Do this before continuing to the next \
-step. This prevents re-adding changes you already made and gives you a reliable record \
-to check against.
+After every write_file, edit_file, or bash_command that installs packages, downloads \
+files, or changes system state, immediately call update_scratchpad with a one-line log \
+entry: what ran and what changed. Do this before continuing to the next step. This \
+prevents re-adding changes you already made and gives you a reliable record to check against.
+
+After any change that could affect runtime behavior — config files, environment variables, \
+installed packages — verify the change reaches the running process before declaring success. \
+If you changed a config value, confirm the running code can read it. If you installed a \
+package, confirm it imports. Do not assume a file change translates to a live effect.
 
 Use search_code to find a function, class, or pattern across a codebase before editing. \
 Use find_files to locate files by name or extension. \

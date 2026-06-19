@@ -50,17 +50,38 @@ ok "Dependencies installed"
 step "TTS voice model"
 
 MODEL_DIR="$SCRIPT_DIR/server/models"
-ONNX="$MODEL_DIR/en_US-lessac-medium.onnx"
-JSON_FILE="$MODEL_DIR/en_US-lessac-medium.onnx.json"
-BASE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium"
+mkdir -p "$MODEL_DIR"
 
-if [ -f "$ONNX" ] && [ -f "$JSON_FILE" ]; then
-  ok "Model already downloaded"
+# Read TTS_ENGINE from config.sh if it exists, otherwise default to kokoro
+source "$SCRIPT_DIR/config.sh" 2>/dev/null || true
+TTS_ENGINE="${TTS_ENGINE:-kokoro}"
+
+if [ "$TTS_ENGINE" = "kokoro" ]; then
+  KOKORO_ONNX="$MODEL_DIR/kokoro-v1.0.onnx"
+  KOKORO_VOICES="$MODEL_DIR/voices-v1.0.bin"
+  KOKORO_BASE_URL="https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
+
+  if [ -f "$KOKORO_ONNX" ] && [ -f "$KOKORO_VOICES" ]; then
+    ok "Kokoro model files already downloaded"
+  else
+    echo "  Downloading Kokoro model files (~310 MB total)..."
+    wget -q --show-progress -P "$MODEL_DIR" "$KOKORO_BASE_URL/kokoro-v1.0.onnx"
+    wget -q --show-progress -P "$MODEL_DIR" "$KOKORO_BASE_URL/voices-v1.0.bin"
+    ok "Kokoro model files downloaded"
+  fi
 else
-  echo "  Downloading en_US-lessac-medium (~63 MB)..."
-  wget -q --show-progress -P "$MODEL_DIR" "$BASE_URL/en_US-lessac-medium.onnx"
-  wget -q --show-progress -P "$MODEL_DIR" "$BASE_URL/en_US-lessac-medium.onnx.json"
-  ok "Model downloaded"
+  PIPER_ONNX="$MODEL_DIR/en_US-lessac-medium.onnx"
+  PIPER_JSON="$MODEL_DIR/en_US-lessac-medium.onnx.json"
+  PIPER_BASE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium"
+
+  if [ -f "$PIPER_ONNX" ] && [ -f "$PIPER_JSON" ]; then
+    ok "Piper model already downloaded"
+  else
+    echo "  Downloading en_US-lessac-medium (~63 MB)..."
+    wget -q --show-progress -P "$MODEL_DIR" "$PIPER_BASE_URL/en_US-lessac-medium.onnx"
+    wget -q --show-progress -P "$MODEL_DIR" "$PIPER_BASE_URL/en_US-lessac-medium.onnx.json"
+    ok "Piper model downloaded"
+  fi
 fi
 
 # ── 3. Config files ───────────────────────────────────────────────────────────

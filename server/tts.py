@@ -1,28 +1,77 @@
+import os
+import time
+import wave
 from pathlib import Path
-from piper import PiperVoice
 
-MODEL_NAME = "en_US-lessac-medium"
 MODELS_DIR = Path(__file__).parent / "models"
 
-_voice = None
+# Config from environment (sourced from config.sh by start.sh)
+TTS_ENGINE = os.environ.get("TTS_ENGINE", "kokoro").lower()
+KOKORO_VOICE = os.environ.get("KOKORO_VOICE", "af_bella")
 
-def get_voice() -> PiperVoice:
-    global _voice
-    if _voice is None:
-        model_path = MODELS_DIR / f"{MODEL_NAME}.onnx"
+# Piper fallback config
+PIPER_MODEL_NAME = "en_US-lessac-medium"
+
+# Lazy-loaded engine instances
+_kokoro = None
+_piper_voice = None
+
+
+def _get_kokoro():
+    global _kokoro
+    if _kokoro is None:
+        from kokoro_onnx import Kokoro
+        model_path = MODELS_DIR / "kokoro-v1.0.onnx"
+        voices_path = MODELS_DIR / "voices-v1.0.bin"
+        if not model_path.exists() or not voices_path.exists():
+            raise FileNotFoundError(
+                f"Kokoro model files not found in {MODELS_DIR}. "
+                "Run ./install.sh to download them."
+            )
+        _kokoro = Kokoro(str(model_path), str(voices_path))
+    return _kokoro
+
+
+def _get_piper():
+    global _piper_voice
+    if _piper_voice is None:
+        from piper import PiperVoice
+        model_path = MODELS_DIR / f"{PIPER_MODEL_NAME}.onnx"
         if not model_path.exists():
             raise FileNotFoundError(
                 f"Piper model not found at {model_path}. "
-                f"Download it from HuggingFace rhasspy/piper-voices."
+                "Download it from HuggingFace rhasspy/piper-voices."
             )
-        _voice = PiperVoice.load(str(model_path))
-    return _voice
+        _piper_voice = PiperVoice.load(str(model_path))
+    return _piper_voice
 
-def synthesize(text: str, output_path: str) -> None:
-    import wave
-    import time
-    voice = get_voice()
-    t0 = time.time()
+
+def _synthesize_kokoro(text: str, output_path: str) -> None:
+    import soundfile as sf
+    kokoro = _get_kokoro()
+    lang = "en-gb" if KOKORO_VOICE.startswith("b") else "en-us"
+    samples, sample_rate = kokoro.create(text, voice=KOKORO_VOICE, speed=1.0, lang=lang)
+    sf.write(output_path, samples, sample_rate)
+
+
+def _synthesize_piper(text: str, output_path: str) -> None:
+    voice = _get_piper()
     with wave.open(output_path, "w") as wav_file:
         voice.synthesize_wav(text, wav_file)
-    print(f"[tts] synthesized {len(text)} chars in {(time.time()-t0)*1000:.0f}ms")
+
+
+def synthesize(text: str, output_path: str) -> None:
+    t0 = time.time()
+    engine_used = TTS_ENGINE
+
+    if TTS_ENGINE == "kokoro":
+        try:
+            _synthesize_kokoro(text, output_path)
+        except Exception as e:
+            print(f"[tts] Kokoro failed ({e}), falling back to Piper")
+            engine_used = "piper"
+            _synthesize_piper(text, output_path)
+    else:
+        _synthesize_piper(text, output_path)
+
+    print(f"[tts] {engine_used} synthesized {len(text)} chars in {(time.time()-t0)*1000:.0f}ms")

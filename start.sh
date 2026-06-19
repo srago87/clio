@@ -8,7 +8,9 @@ if [ ! -f "$CONFIG" ]; then
   echo "Error: config.sh not found. Copy config.sh.example to config.sh and fill it in."
   exit 1
 fi
+set -a
 source "$CONFIG"
+set +a
 
 TUNNEL_MODE="${TUNNEL_MODE:-tailscale}"
 
