@@ -17,6 +17,12 @@
 <body>
   <header>
     <span class="wordmark">Clio</span>
+    <select id="model-select" title="Conversation model">
+      <option value="claude-haiku-4-5-20251001">Haiku</option>
+      <option value="claude-sonnet-4-6" selected>Sonnet</option>
+      <option value="claude-opus-4-8">Opus</option>
+    </select>
+    <span id="cost-display">$0.0000</span>
   </header>
   <div id="progress-line"><div id="progress-bar"></div></div>
 

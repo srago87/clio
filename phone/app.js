@@ -44,6 +44,9 @@ let micMuted = false;
 let memoryEnabled = false;
 let memoryPromptResolved = false;
 
+// Track current model
+let currentModel = "claude-sonnet-4-6";
+
 // ── DOM ───────────────────────────────────────────────────────────────────
 const statusBadge      = document.getElementById("status-badge");
 const conversation     = document.getElementById("conversation");
@@ -58,6 +61,8 @@ const btnMemoryYes     = document.getElementById("btn-memory-yes");
 const btnMemoryNo      = document.getElementById("btn-memory-no");
 const progressBar      = document.getElementById("progress-bar");
 const speakingGlow     = document.getElementById("speaking-glow");
+const modelSelect      = document.getElementById("model-select");
+const costDisplay      = document.getElementById("cost-display");
 
 // ── WebSocket ─────────────────────────────────────────────────────────────
 function connect() {
@@ -119,6 +124,9 @@ function handleServerMessage(msg) {
       break;
     case "close_bubble":
       currentClaudeBubble = null;
+      break;
+    case "cost_update":
+      updateCostDisplay(msg.session_usd);
       break;
     case "error":
       setStatus("error", "Error");
@@ -683,6 +691,24 @@ function sendAudio() {
   };
   reader.readAsDataURL(blob);
 }
+
+// ── Cost display ──────────────────────────────────────────────────────────
+let costFlashTimer = null;
+
+function updateCostDisplay(usd) {
+  costDisplay.textContent = "$" + usd.toFixed(4);
+  costDisplay.classList.add("flash");
+  if (costFlashTimer) clearTimeout(costFlashTimer);
+  costFlashTimer = setTimeout(() => costDisplay.classList.remove("flash"), 600);
+}
+
+// ── Model selector ────────────────────────────────────────────────────────
+modelSelect.onchange = () => {
+  currentModel = modelSelect.value;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "set_model", model: currentModel }));
+  }
+};
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 if ("serviceWorker" in navigator) {

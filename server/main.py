@@ -146,6 +146,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 if agent.memory_enabled:
                     asyncio.create_task(consolidate_sessions(current_log_path=voice_session.log_path))
 
+            elif msg_type == "set_model":
+                model_id = message.get("model", "")
+                if not agent.set_model(model_id):
+                    print(f"[agent] ignoring unknown model: {model_id!r}")
+
     except WebSocketDisconnect:
         pass
     finally:

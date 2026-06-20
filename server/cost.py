@@ -1,34 +1,63 @@
-from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-# claude-sonnet-4-6 pricing (USD per token)
-_INPUT   = 3.00  / 1_000_000
-_OUTPUT  = 15.00 / 1_000_000
-_CACHE_W = 3.75  / 1_000_000
-_CACHE_R = 0.30  / 1_000_000
+PRICING: dict[str, dict[str, float]] = {
+    "claude-haiku-4-5": {
+        "input":       1.00 / 1_000_000,
+        "output":      5.00 / 1_000_000,
+        "cache_write": 1.25 / 1_000_000,
+        "cache_read":  0.10 / 1_000_000,
+    },
+    "claude-haiku-4-5-20251001": {
+        "input":       1.00 / 1_000_000,
+        "output":      5.00 / 1_000_000,
+        "cache_write": 1.25 / 1_000_000,
+        "cache_read":  0.10 / 1_000_000,
+    },
+    "claude-sonnet-4-6": {
+        "input":       3.00 / 1_000_000,
+        "output":     15.00 / 1_000_000,
+        "cache_write": 3.75 / 1_000_000,
+        "cache_read":  0.30 / 1_000_000,
+    },
+    "claude-opus-4-8": {
+        "input":       5.00 / 1_000_000,
+        "output":     25.00 / 1_000_000,
+        "cache_write": 6.25 / 1_000_000,
+        "cache_read":  0.50 / 1_000_000,
+    },
+}
+
+_FALLBACK = PRICING["claude-sonnet-4-6"]
 
 
-def usd_from_usage(usage) -> float:
+def _price(model: str) -> dict[str, float]:
+    return PRICING.get(model, _FALLBACK)
+
+
+def usd_from_usage(usage, model: str = "claude-sonnet-4-6") -> float:
+    p = _price(model)
     return (
-        getattr(usage, "input_tokens", 0)                  * _INPUT   +
-        getattr(usage, "output_tokens", 0)                 * _OUTPUT  +
-        getattr(usage, "cache_creation_input_tokens", 0)   * _CACHE_W +
-        getattr(usage, "cache_read_input_tokens", 0)       * _CACHE_R
+        getattr(usage, "input_tokens", 0)                * p["input"]       +
+        getattr(usage, "output_tokens", 0)               * p["output"]      +
+        getattr(usage, "cache_creation_input_tokens", 0) * p["cache_write"] +
+        getattr(usage, "cache_read_input_tokens", 0)     * p["cache_read"]
     )
 
 
-def log_usage(label: str, usage) -> None:
+def log_usage(label: str, usage, model: str = "claude-sonnet-4-6") -> None:
     """Log cost for a single API call outside of a session (e.g. consolidation)."""
-    cost = usd_from_usage(usage)
+    cost = usd_from_usage(usage, model)
     inp = getattr(usage, "input_tokens", 0)
     out = getattr(usage, "output_tokens", 0)
     cw  = getattr(usage, "cache_creation_input_tokens", 0)
     cr  = getattr(usage, "cache_read_input_tokens", 0)
-    print(f"[cost] {label}: ${cost:.4f} ({inp}in / {out}out / {cw}cw / {cr}cr)")
+    short = model.replace("claude-", "").replace("-20251001", "")
+    print(f"[cost] {label} ({short}): ${cost:.4f} ({inp}in / {out}out / {cw}cw / {cr}cr)")
 
 
 @dataclass
 class _Bucket:
+    model: str = "claude-sonnet-4-6"
     input_tokens: int = 0
     output_tokens: int = 0
     cache_write_tokens: int = 0
@@ -44,32 +73,40 @@ class _Bucket:
 
     @property
     def usd(self) -> float:
+        p = _price(self.model)
         return (
-            self.input_tokens       * _INPUT   +
-            self.output_tokens      * _OUTPUT  +
-            self.cache_write_tokens * _CACHE_W +
-            self.cache_read_tokens  * _CACHE_R
+            self.input_tokens       * p["input"]       +
+            self.output_tokens      * p["output"]      +
+            self.cache_write_tokens * p["cache_write"] +
+            self.cache_read_tokens  * p["cache_read"]
         )
 
 
 class SessionCostTracker:
     def __init__(self):
-        self._buckets: dict[str, _Bucket] = defaultdict(_Bucket)
+        self._buckets: dict[str, _Bucket] = {}
 
-    def record(self, label: str, usage) -> None:
+    def record(self, label: str, usage, model: str = "claude-sonnet-4-6") -> None:
+        if label not in self._buckets:
+            self._buckets[label] = _Bucket(model=model)
         self._buckets[label].add(usage)
+
+    @property
+    def total_usd(self) -> float:
+        return sum(b.usd for b in self._buckets.values())
 
     def report(self) -> str:
         if not self._buckets:
             return "[cost] no API calls recorded this session"
 
-        total = sum(b.usd for b in self._buckets.values())
+        total = self.total_usd
         lines = ["[cost] ── session cost summary ──────────────────"]
         for label in sorted(self._buckets):
             b = self._buckets[label]
             suffix = f"×{b.calls}" if b.calls > 1 else ""
+            short = b.model.replace("claude-", "").replace("-20251001", "")
             lines.append(
-                f"[cost]   {label}{suffix}: ${b.usd:.4f}"
+                f"[cost]   {label}{suffix} ({short}): ${b.usd:.4f}"
                 f"  ({b.input_tokens}in / {b.output_tokens}out"
                 f"{f' / {b.cache_write_tokens}cw' if b.cache_write_tokens else ''}"
                 f"{f' / {b.cache_read_tokens}cr' if b.cache_read_tokens else ''})"

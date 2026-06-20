@@ -24,7 +24,14 @@ from .tools import (
     summarize_tool_result,
 )
 
-MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-sonnet-4-6"
+MEMORY_MODEL  = "claude-haiku-4-5-20251001"
+AVAILABLE_MODELS = [
+    ("claude-haiku-4-5-20251001", "Haiku"),
+    ("claude-sonnet-4-6",         "Sonnet"),
+    ("claude-opus-4-8",           "Opus"),
+]
+
 USER_NAME = os.environ.get("USER_NAME", "").strip()
 CLIO_DIR = Path(__file__).parent.parent
 WORK_DIR = CLIO_DIR.parent
@@ -215,7 +222,7 @@ async def consolidate_sessions(current_log_path=None):
 
     try:
         response = await client.messages.create(
-            model=MODEL,
+            model=MEMORY_MODEL,
             max_tokens=1024,
             system=(
                 "You are a memory extraction assistant. Given one or more voice session logs, "
@@ -227,13 +234,13 @@ async def consolidate_sessions(current_log_path=None):
             ),
             messages=[{"role": "user", "content": all_logs_text}],
         )
-        log_usage("consolidation-extract", response.usage)
+        log_usage("consolidation-extract", response.usage, MEMORY_MODEL)
         extracted = response.content[0].text.strip()
 
         if extracted != "NO_UPDATE":
             current_memory = MEMORY_PATH.read_text().strip() if MEMORY_PATH.exists() else ""
             merge_response = await client.messages.create(
-                model=MODEL,
+                model=MEMORY_MODEL,
                 max_tokens=4096,
                 system=(
                     "You are a memory management assistant. Merge new facts into the existing "
@@ -246,7 +253,7 @@ async def consolidate_sessions(current_log_path=None):
                     "content": f"Current memory:\n{current_memory}\n\nNew facts:\n{extracted}",
                 }],
             )
-            log_usage("consolidation-merge", merge_response.usage)
+            log_usage("consolidation-merge", merge_response.usage, MEMORY_MODEL)
             updated_memory = merge_response.content[0].text.strip()
             MEMORY_PATH.write_text(updated_memory + "\n")
             print(f"[memory] memory updated ({len(updated_memory)} bytes)")
@@ -275,7 +282,7 @@ async def compress_memory(client: anthropic.AsyncAnthropic, current_text: str = 
 
         print(f"[memory] compressing memory ({len(current_text.encode())} bytes)")
         response = await client.messages.create(
-            model=MODEL,
+            model=MEMORY_MODEL,
             max_tokens=2048,
             system=(
                 "You are a memory compression assistant. The memory file has grown too large. "
@@ -286,9 +293,9 @@ async def compress_memory(client: anthropic.AsyncAnthropic, current_text: str = 
             messages=[{"role": "user", "content": current_text}],
         )
         if cost is not None:
-            cost.record("mem-compress", response.usage)
+            cost.record("mem-compress", response.usage, MEMORY_MODEL)
         else:
-            log_usage("mem-compress", response.usage)
+            log_usage("mem-compress", response.usage, MEMORY_MODEL)
         compressed = response.content[0].text.strip()
         MEMORY_PATH.write_text(compressed + "\n")
         print(f"[memory] compressed to {len(compressed.encode())} bytes")
@@ -303,10 +310,19 @@ class AgentSession:
         self.conversation: list = []
         self.scratchpad: str = ""
         self.memory_enabled: bool = False
+        self.model: str = DEFAULT_MODEL
         self._pending_permission: Optional[asyncio.Future] = None
         self._pending_tool_id: Optional[str] = None
         self.cost = SessionCostTracker()
         TMP_DIR.mkdir(exist_ok=True)
+
+    def set_model(self, model_id: str) -> bool:
+        valid = {m for m, _ in AVAILABLE_MODELS}
+        if model_id in valid:
+            self.model = model_id
+            print(f"[agent] model set to {model_id}")
+            return True
+        return False
 
     def log_cost(self) -> None:
         print(self.cost.report())
@@ -321,6 +337,12 @@ class AgentSession:
         if label:
             payload["label"] = label
         await self._send(payload)
+
+    async def _send_cost_update(self):
+        try:
+            await self._send({"type": "cost_update", "session_usd": self.cost.total_usd})
+        except Exception:
+            pass
 
     # ── permission relay ──────────────────────────────────────────────────
 
@@ -378,7 +400,7 @@ class AgentSession:
             # 2. Streaming agent loop — sends audio_chunk messages as sentences arrive
             await self._status("thinking", "Thinking…")
             self.conversation.append({"role": "user", "content": transcript})
-            print(f"[agent] streaming Claude API")
+            print(f"[agent] streaming Claude API ({self.model})")
             response_text = await self._stream_agent_loop(client)
             print(f"[agent] turn complete ({len(response_text)} chars)")
 
@@ -413,12 +435,13 @@ class AgentSession:
         try:
             exchange_summary = f"User: {user_text}\n\nAssistant: {assistant_text}"
             response = await client.messages.create(
-                model=MODEL,
+                model=MEMORY_MODEL,
                 max_tokens=512,
                 system=MEMORY_EXTRACTION_PROMPT,
                 messages=[{"role": "user", "content": exchange_summary}],
             )
-            self.cost.record("mem-extract", response.usage)
+            self.cost.record("mem-extract", response.usage, MEMORY_MODEL)
+            await self._send_cost_update()
             extracted = response.content[0].text.strip()
             if extracted == "NO_UPDATE":
                 return
@@ -426,7 +449,7 @@ class AgentSession:
             # Merge extracted facts into the existing memory file
             current_memory = MEMORY_PATH.read_text().strip() if MEMORY_PATH.exists() else ""
             merge_response = await client.messages.create(
-                model=MODEL,
+                model=MEMORY_MODEL,
                 max_tokens=4096,
                 system=(
                     "You are a memory management assistant. You will be given the current memory file "
@@ -440,14 +463,16 @@ class AgentSession:
                     "content": f"Current memory:\n{current_memory}\n\nNew facts:\n{extracted}",
                 }],
             )
-            self.cost.record("mem-merge", merge_response.usage)
+            self.cost.record("mem-merge", merge_response.usage, MEMORY_MODEL)
+            await self._send_cost_update()
             updated_memory = merge_response.content[0].text.strip()
             MEMORY_PATH.write_text(updated_memory + "\n")
             print(f"[agent] memory updated ({len(updated_memory)} bytes)")
 
             # Compress if over size limit
             if len(updated_memory.encode()) > MEMORY_SIZE_LIMIT:
-                await compress_memory(client, updated_memory)
+                await compress_memory(client, updated_memory, self.cost)
+                await self._send_cost_update()
 
         except Exception as e:
             print(f"[agent] memory extraction error: {e!r}")
@@ -480,7 +505,7 @@ class AgentSession:
             worker = asyncio.create_task(synthesis_worker())
 
             async with client.messages.stream(
-                model=MODEL,
+                model=self.model,
                 max_tokens=8192,
                 system=[
                     {
@@ -514,7 +539,8 @@ class AgentSession:
                 await worker                    # wait for all synthesis to finish
 
                 response = await stream.get_final_message()
-                self.cost.record("turn", response.usage)
+                self.cost.record("turn", response.usage, self.model)
+                await self._send_cost_update()
 
             full_text += turn_text
 
@@ -611,6 +637,7 @@ class AgentSession:
                 updated = MEMORY_PATH.read_text() if MEMORY_PATH.exists() else ""
                 if len(updated.encode()) > MEMORY_SIZE_LIMIT:
                     await compress_memory(client, updated, self.cost)
+                    await self._send_cost_update()
 
             await self._send({
                 "type": "tool_result",

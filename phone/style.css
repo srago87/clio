@@ -389,3 +389,48 @@ footer {
   letter-spacing: 0.05em;
   padding: 60px 20px;
 }
+
+/* ── Header controls ───────────────────────────────────────────────────── */
+
+#model-select {
+  margin-left: auto;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--text-muted);
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-family: inherit;
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  text-align: center;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+#model-select:focus {
+  outline: none;
+  color: var(--cyan);
+  border-color: var(--cyan-dim);
+}
+
+#model-select option {
+  background: var(--surface);
+  color: var(--text);
+}
+
+#cost-display {
+  margin-left: 10px;
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  transition: color 0.15s;
+}
+
+#cost-display.flash {
+  color: var(--cyan);
+}
