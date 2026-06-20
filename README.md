@@ -19,6 +19,8 @@ The broader goal is a general-purpose ambient assistant — something reachable 
 - **Voice in, voice out** — speak from your phone, hear responses in real time via streaming TTS
 - **Real tool use** — reads, writes, and edits files; runs shell commands; searches the web; manages background processes; fetches URLs; controls a browser
 - **Phone-side approval** — destructive actions (writing files, running commands) require a tap to approve before executing
+- **Model selector** — switch between Haiku, Sonnet, and Opus from the phone UI; memory pipeline always uses Haiku regardless of selection
+- **Live cost counter** — session spend shown in the header, ticking up in real time as API calls complete
 - **Mic mute toggle** — tap the mic button to mute; the OS mic indicator light goes off and Clio stays quiet until you unmute
 - **Live status badge** — shows what Clio is doing with a label and elapsed timer (e.g. "read agent.py (3s)")
 - **Amplitude-driven glow** — the speaking glow pulses in real time with the audio amplitude during playback
@@ -35,8 +37,8 @@ Phone (PWA)
     ↕ WebSocket (wss://)
 FastAPI Backend (server)
     ├── faster-whisper  (speech-to-text)
-    ├── Anthropic API   (Claude Sonnet agent loop)
-    ├── piper-tts       (text-to-speech, streamed sentence by sentence)
+    ├── Anthropic API   (Claude agent loop — Sonnet by default, Haiku for memory)
+    ├── Kokoro / Piper  (text-to-speech, streamed sentence by sentence)
     └── VoiceSession    (markdown log per connection)
 
 Tailscale → server:8765 (HTTPS/WSS via Tailscale cert)
@@ -243,7 +245,7 @@ clio/
 │   ├── browser.py      # Playwright browser automation wrapper
 │   ├── jobs.py         # Background process manager
 │   ├── stt.py          # faster-whisper wrapper (VAD, hallucination filtering)
-│   ├── tts.py          # piper-tts wrapper
+│   ├── tts.py          # Kokoro/Piper TTS wrapper
 │   ├── session.py      # Per-connection session log
 │   ├── cost.py         # Token usage tracking and cost calculation
 │   └── requirements.txt
