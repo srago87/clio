@@ -2,6 +2,7 @@ import asyncio
 import base64
 import logging
 import logging.handlers
+import os
 import secrets
 import sys
 import uuid
@@ -14,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from .agent import AgentSession, TMP_DIR, consolidate_sessions
 from .session import VoiceSession
 from .stt import reset_last_transcript
-from .tts import synthesize
+from .tts import synthesize, TTS_ENGINE, MODELS_DIR, PIPER_MODEL_NAME
 
 SESSION_TOKEN = secrets.token_hex(16)
 
@@ -44,6 +45,37 @@ class _PrintToLog:
 sys.stdout = _PrintToLog()
 
 app = FastAPI()
+
+
+@app.on_event("startup")
+async def preflight_checks():
+    errors = []
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        errors.append(
+            "ANTHROPIC_API_KEY is not set — add it to config.sh and restart."
+        )
+
+    if TTS_ENGINE == "kokoro":
+        for fname in ("kokoro-v1.0.onnx", "voices-v1.0.bin"):
+            if not (MODELS_DIR / fname).exists():
+                errors.append(
+                    f"Kokoro model file missing: {MODELS_DIR / fname}\n"
+                    "  Run ./install.sh to download it."
+                )
+    else:
+        model_path = MODELS_DIR / f"{PIPER_MODEL_NAME}.onnx"
+        if not model_path.exists():
+            errors.append(
+                f"Piper model not found: {model_path}\n"
+                "  Run ./install.sh to download it."
+            )
+
+    if errors:
+        for err in errors:
+            print(f"[startup] ERROR: {err}")
+        sys.exit(1)
+
 
 PHONE_DIR = Path(__file__).parent.parent / "phone"
 CLIO_DIR = Path(__file__).parent.parent
