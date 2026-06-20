@@ -6,6 +6,14 @@ A voice-controlled coding assistant you talk to from your phone. Speak a request
 
 ---
 
+## Vision
+
+The coding focus is intentional, not the end goal. A computer fundamentally reads, writes, and executes on files — everything else is an abstraction built on those three operations. Starting here means building on the most verifiable foundation: either the code works or it doesn't.
+
+The broader goal is a general-purpose ambient assistant — something reachable from anywhere, that you can talk to naturally and ask to handle anything you'd normally have to sit down at a computer for. The architecture already supports this. Extending into new domains is mostly a question of adding tools and context.
+
+---
+
 ## What it does
 
 - **Voice in, voice out** — speak from your phone, hear responses in real time via streaming TTS
@@ -178,9 +186,6 @@ Clio reads `memory.md` at the start of every turn and updates it via the `update
 
 After each conversation turn, Clio autonomously extracts any facts worth keeping and appends them to memory. At the start of each session, it consolidates logs from previous sessions into memory and marks them processed. If the memory file grows beyond a configurable size limit (`MEMORY_SIZE_LIMIT` in `agent.py`), it compresses the file by summarizing it — discarding redundancy while keeping what matters. This happens automatically, both on session start and after explicit `update_memory` calls.
 
-### Journal (`journal.md`)
-Clio maintains a second file — `journal.md` — for the experiential side of memory: what sessions felt like, what seemed significant, the texture of conversation beyond raw facts. It lives alongside `memory.md` but holds a different kind of record. Copy `journal.example.md` to `journal.md` to start one. Both files are gitignored and stay local.
-
 ### Your name (`USER_NAME`)
 Set `USER_NAME` in `config.sh` to have Clio address you by name. The installer prompts for this. You can also set it later by editing `config.sh` directly.
 
@@ -253,7 +258,6 @@ clio/
 │   └── sw.js           # Service worker
 ├── soul.example.md     # Clio's personality — copy to soul.md and customize
 ├── memory.example.md   # Clio's memory template — copy to memory.md
-├── journal.example.md  # Clio's journal template — copy to journal.md
 ├── config.sh.example   # Config template — copy to config.sh and fill in
 ├── start.sh            # Start the server
 ├── restart.sh          # Restart a running instance
@@ -306,7 +310,6 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 - Better visible browser navigation — when browser_open is called with headless=false, Clio should narrate what it sees on screen more fluidly and take natural multi-step browsing actions without needing explicit instructions for each step.
 - Smarter sentence splitting — the current regex splits only on period/exclamation/question mark followed by whitespace, which means version numbers, file paths, URLs, and abbreviations like "e.g." can cause premature or missed splits during TTS streaming.
 - Context management for long sessions — conversation history grows without bound; add summarization or sliding-window trimming before context limits are hit.
-- Cost reporting to the phone — the SessionCostTracker already accumulates token usage per turn but only prints it to the server log; surface a session cost summary to the user on request.
 - Multi-voice TTS — allow the user to choose from multiple piper voices in config.sh without editing Python source.
 
 ### New features
