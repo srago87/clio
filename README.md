@@ -164,6 +164,16 @@ Once installed, tap the mic button to begin. Clio listens for speech, detects a 
 
 ---
 
+## Live diff viewer *(prototype)*
+
+While Clio is working, open `/diff` in a desktop browser (same base URL as the phone UI) to watch file changes as they happen. Each time Clio writes or edits a file, a GitHub-style diff card appears showing the old and new content side by side — red for removed lines, green for added lines. A status dot in the header shows whether the connection is live.
+
+This is useful for keeping an eye on what Clio is doing without switching to a terminal or manually re-reading files. Opening VS Code on the same directory works equally well and gives you the full editor experience; the diff viewer is a lighter alternative if you just want to monitor changes.
+
+> **Prototype:** the diff viewer is functional but rough — no persistence across page refreshes, no file tree, and no way to revert a change from the UI. It's a starting point, not a finished tool.
+
+---
+
 ## Mic mute
 
 Tap the mic button any time after setup to toggle mute. When muted:
