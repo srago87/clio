@@ -287,9 +287,10 @@ async def compress_memory(client: anthropic.AsyncAnthropic, current_text: str = 
 
 
 class AgentSession:
-    def __init__(self, websocket: WebSocket, voice_session: VoiceSession):
+    def __init__(self, websocket: WebSocket, voice_session: VoiceSession, diff_manager=None):
         self.websocket = websocket
         self.voice_session = voice_session
+        self.diff_manager = diff_manager
         self.conversation: list = []
         self.scratchpad: str = ""
         self.memory_enabled: bool = False
@@ -628,16 +629,26 @@ class AgentSession:
                 "summary": summarize_tool_result(block.name, result),
             })
 
+            # File diff result — broadcast to diff viewers and extract text for Claude
+            if isinstance(result, dict) and "_diff" in result:
+                if result["_diff"] and self.diff_manager:
+                    asyncio.create_task(self.diff_manager.broadcast({
+                        "type": "file_diff",
+                        "path": result["path"],
+                        "old": result["old"],
+                        "new": result["new"],
+                    }))
+                tool_result_content = result["text"]
             # browser_screenshot returns a dict (image content block) — wrap it
-            if isinstance(result, dict):
-                content = [result]
+            elif isinstance(result, dict):
+                tool_result_content = [result]
             else:
-                content = result
+                tool_result_content = result
 
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,
-                "content": content,
+                "content": tool_result_content,
             })
 
         return tool_results

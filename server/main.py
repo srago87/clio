@@ -19,6 +19,33 @@ from .tts import synthesize, TTS_ENGINE, MODELS_DIR, PIPER_MODEL_NAME
 
 SESSION_TOKEN = secrets.token_hex(16)
 
+
+class DiffConnectionManager:
+    """Manages WebSocket connections for the live diff desktop view."""
+
+    def __init__(self):
+        self.connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.connections.remove(websocket)
+
+    async def broadcast(self, payload: dict):
+        dead = []
+        for ws in self.connections:
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.connections.remove(ws)
+
+
+diff_manager = DiffConnectionManager()
+
 # Set root logger to WARNING — silences all third-party noise (httpx, httpcore, anthropic, faster_whisper, etc.)
 logging.getLogger().setLevel(logging.WARNING)
 
@@ -107,6 +134,31 @@ async def serve_touch_icon():
     return FileResponse(str(PHONE_DIR / "icon-192.png"), media_type="image/png")
 
 
+@app.get("/diff")
+async def serve_diff():
+    html = (PHONE_DIR / "diff.html").read_text()
+    script = f'<script>window.CLIO_TOKEN="{SESSION_TOKEN}";</script>'
+    html = html.replace("</head>", f"{script}\n</head>", 1)
+    return HTMLResponse(html)
+
+
+@app.websocket("/ws/diff")
+async def diff_websocket_endpoint(websocket: WebSocket):
+    token = websocket.query_params.get("token", "")
+    if token != SESSION_TOKEN:
+        await websocket.close(code=4403)
+        return
+    await diff_manager.connect(websocket)
+    try:
+        # Keep connection alive; client sends nothing, just receives
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        diff_manager.disconnect(websocket)
+
+
 @app.get("/audio/{filename}")
 async def serve_audio(filename: str):
     # Sanitize filename to prevent path traversal
@@ -144,7 +196,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     reset_last_transcript()  # clear cross-session priming so hallucinations get filtered
     voice_session = VoiceSession()
-    agent = AgentSession(websocket, voice_session)
+    agent = AgentSession(websocket, voice_session, diff_manager=diff_manager)
     processing_task: asyncio.Task | None = None
 
     # Ask the user whether to save this session to memory

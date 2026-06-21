@@ -46,11 +46,44 @@ def _get_piper():
     return _piper_voice
 
 
+def _split_for_kokoro(text: str, max_chars: int = 200) -> list[str]:
+    """Split text at sentence/clause boundaries to stay under Kokoro's phoneme limit."""
+    if len(text) <= max_chars:
+        return [text]
+    chunks = []
+    while text:
+        if len(text) <= max_chars:
+            chunks.append(text)
+            break
+        candidate = text[:max_chars]
+        split_at = -1
+        for sep in [". ", "! ", "? ", "; ", ", ", " "]:
+            idx = candidate.rfind(sep)
+            if idx > max_chars // 2:
+                split_at = idx + len(sep)
+                break
+        if split_at == -1:
+            split_at = max_chars
+        chunks.append(text[:split_at].strip())
+        text = text[split_at:].strip()
+    return [c for c in chunks if c]
+
+
 def _synthesize_kokoro(text: str, output_path: str) -> None:
+    import numpy as np
     import soundfile as sf
     kokoro = _get_kokoro()
     lang = "en-gb" if KOKORO_VOICE.startswith("b") else "en-us"
-    samples, sample_rate = kokoro.create(text, voice=KOKORO_VOICE, speed=1.0, lang=lang)
+    chunks = _split_for_kokoro(text)
+    if len(chunks) == 1:
+        samples, sample_rate = kokoro.create(text, voice=KOKORO_VOICE, speed=1.0, lang=lang)
+    else:
+        parts, sample_rate = [], None
+        for chunk in chunks:
+            s, sr = kokoro.create(chunk, voice=KOKORO_VOICE, speed=1.0, lang=lang)
+            parts.append(s)
+            sample_rate = sr
+        samples = np.concatenate(parts)
     sf.write(output_path, samples, sample_rate)
 
 

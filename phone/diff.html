@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clio — Live Diff</title>
+  <link rel="stylesheet" href="/static/diff.css">
+</head>
+<body>
+
+  <div id="header">
+    <div id="status-dot"></div>
+    <h1>Clio</h1>
+    <span id="status-label">Connecting…</span>
+    <button id="clear-btn">Clear</button>
+  </div>
+
+  <div id="content">
+    <div id="empty-state">
+      <div>Waiting for file changes…</div>
+      <div class="hint">Edits made by Clio will appear here in real time.</div>
+    </div>
+  </div>
+
+  <button id="scroll-btn">↓ Latest</button>
+
+  <script src="/static/diff.js"></script>
+</body>
+</html>

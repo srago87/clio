@@ -386,7 +386,7 @@ TOOL_DEFINITIONS = [
 ]
 
 
-def execute_tool(name: str, inputs: dict) -> str:
+def execute_tool(name: str, inputs: dict):
     try:
         if name == "read_file":
             return _read_file(inputs["path"], inputs.get("start_line"), inputs.get("end_line"))
@@ -513,6 +513,13 @@ def describe_tool_call(name: str, inputs: dict) -> str:
 
 
 def summarize_tool_result(name: str, result) -> str:
+    # File diff results are dicts with a "_diff" key
+    if isinstance(result, dict) and "_diff" in result:
+        text = result["text"]
+        if text.startswith("Error:"):
+            return text[:80]
+        return "File written" if name == "write_file" else "Edit applied"
+    # browser_screenshot returns a dict (image content block)
     if isinstance(result, dict):
         return "Screenshot taken"
     if result.startswith("Error:"):
@@ -682,31 +689,39 @@ def _find_files(pattern: str, path: str = "") -> str:
     return "\n".join(sorted(filtered)[:500])
 
 
-def _write_file(path: str, content: str) -> str:
+def _write_file(path: str, content: str) -> dict:
     p = Path(path).expanduser()
     if not _is_safe_path(p):
-        return f"Error: access to {path} is not allowed"
+        return {"_diff": False, "text": f"Error: access to {path} is not allowed"}
+    old_content = p.read_text() if p.exists() else ""
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content)
-    return f"Wrote {len(content)} bytes to {path}"
+    return {
+        "_diff": True,
+        "path": str(p),
+        "old": old_content,
+        "new": content,
+        "text": f"Wrote {len(content)} bytes to {path}",
+    }
 
 
-def _edit_file(path: str, old_string: str, new_string: str) -> str:
+def _edit_file(path: str, old_string: str, new_string: str) -> dict:
     p = Path(path).expanduser()
     if not _is_safe_path(p):
-        return f"Error: access to {path} is not allowed"
+        return {"_diff": False, "text": f"Error: access to {path} is not allowed"}
     content = p.read_text()
 
     # Exact match
     if old_string in content:
-        p.write_text(content.replace(old_string, new_string, 1))
-        return f"Replaced in {path}"
+        new_content = content.replace(old_string, new_string, 1)
+        p.write_text(new_content)
+        return {"_diff": True, "path": str(p), "old": content, "new": new_content, "text": f"Replaced in {path}"}
 
     # Fuzzy: normalize trailing whitespace per line and retry
     content_lines = content.splitlines(keepends=True)
     old_lines = old_string.splitlines()
     if not old_lines:
-        return "Error: old_string is empty"
+        return {"_diff": False, "text": "Error: old_string is empty"}
 
     n = len(old_lines)
     norm_old = [line.rstrip() for line in old_lines]
@@ -717,18 +732,22 @@ def _edit_file(path: str, old_string: str, new_string: str) -> str:
         if norm_block == norm_old:
             before = "".join(content_lines[:i])
             after = "".join(content_lines[i + n:])
-            p.write_text(before + new_string + after)
-            return f"Replaced in {path}"
+            new_content = before + new_string + after
+            p.write_text(new_content)
+            return {"_diff": True, "path": str(p), "old": content, "new": new_content, "text": f"Replaced in {path}"}
 
     # Helpful error indicating whether the first line exists at all
     first_line = old_lines[0].strip()
     for line in content.splitlines():
         if first_line and first_line in line:
-            return (
-                f"Error: string not found in {path} — the first line was found but "
-                f"surrounding context didn't match. Read the file and use the exact text."
-            )
-    return f"Error: string not found in {path} — read the file first to get the exact text"
+            return {
+                "_diff": False,
+                "text": (
+                    f"Error: string not found in {path} — the first line was found but "
+                    f"surrounding context didn't match. Read the file and use the exact text."
+                ),
+            }
+    return {"_diff": False, "text": f"Error: string not found in {path} — read the file first to get the exact text"}
 
 
 # Output is capped at BASH_OUTPUT_LIMIT (10,000 chars); anything beyond that is truncated with a note.
