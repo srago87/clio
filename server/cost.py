@@ -95,6 +95,13 @@ class SessionCostTracker:
     def total_usd(self) -> float:
         return sum(b.usd for b in self._buckets.values())
 
+    @property
+    def total_input_tokens(self) -> int:
+        return sum(
+            b.input_tokens + b.cache_write_tokens + b.cache_read_tokens
+            for b in self._buckets.values()
+        )
+
     def report(self) -> str:
         if not self._buckets:
             return "[cost] no API calls recorded this session"

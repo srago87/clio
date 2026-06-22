@@ -164,6 +164,9 @@ Do NOT output the full memory file — just the new facts from this exchange."""
 
 MEMORY_SIZE_LIMIT = 10 * 1024  # 10KB
 
+SUMMARIZATION_THRESHOLD = 150_000
+RECENT_EXCHANGES_TO_KEEP = 10      # number of recent user/assistant pairs to leave untouched
+
 
 async def consolidate_sessions(current_log_path=None):
     """
@@ -393,7 +396,10 @@ class AgentSession:
                 self.voice_session.add_exchange(transcript, response_text)
             await self._send({"type": "turn_end"})
 
-            # 4. Async memory extraction (non-blocking, best-effort)
+            # 4. Compress conversation history if token count is approaching the limit
+            await self._maybe_summarize_conversation(client)
+
+            # 5. Async memory extraction (non-blocking, best-effort)
             if self.memory_enabled:
                 asyncio.create_task(
                     self._extract_and_save_memory(client, transcript, response_text)
@@ -460,6 +466,102 @@ class AgentSession:
 
         except Exception as e:
             print(f"[agent] memory extraction error: {e!r}")
+
+    # ── conversation summarization ────────────────────────────────────────
+
+    async def _maybe_summarize_conversation(self, client: anthropic.AsyncAnthropic):
+        """Compress older conversation history when token count crosses the threshold."""
+        if self.cost.total_input_tokens < SUMMARIZATION_THRESHOLD:
+            return
+
+        # Need at least enough messages to have something to summarize
+        messages_to_keep = RECENT_EXCHANGES_TO_KEEP * 2  # user + assistant per exchange
+        if len(self.conversation) <= messages_to_keep:
+            return
+
+        older = self.conversation[:-messages_to_keep]
+        recent = self.conversation[-messages_to_keep:]
+
+        # Only summarize if there's meaningful content to compress
+        if not older:
+            return
+
+        # Ensure the split doesn't fall between an assistant tool_use and its tool_result.
+        # If recent starts with a user message that has tool_result blocks, the corresponding
+        # tool_use is in `older` and would be compressed away. The API merges consecutive
+        # user messages (summary_block + recent[0]), making the tool_result appear orphaned
+        # in messages[0].content[1] → 400 BadRequestError. Fix by pulling the preceding
+        # assistant message into recent so the tool_use/tool_result pair stays together.
+        while recent and older:
+            first = recent[0]
+            content = first.get("content", "")
+            is_tool_result_message = (
+                first.get("role") == "user"
+                and isinstance(content, list)
+                and any(
+                    (isinstance(b, dict) and b.get("type") == "tool_result")
+                    or (hasattr(b, "type") and b.type == "tool_result")
+                    for b in content
+                )
+            )
+            if not is_tool_result_message:
+                break
+            recent = [older[-1]] + recent
+            older = older[:-1]
+
+        if not older:
+            return
+
+        print(f"[agent] summarizing {len(older)} messages (token count: {self.cost.total_input_tokens})")
+
+        # Build a text representation of the older exchanges for summarization
+        history_text = []
+        for msg in older:
+            role = msg["role"].capitalize()
+            content = msg["content"]
+            if isinstance(content, str):
+                history_text.append(f"{role}: {content}")
+            elif isinstance(content, list):
+                # Extract text from content blocks
+                parts = [b.text if hasattr(b, "text") else str(b) for b in content if hasattr(b, "text") or isinstance(b, str)]
+                if parts:
+                    history_text.append(f"{role}: {' '.join(parts)}")
+
+        try:
+            response = await client.messages.create(
+                model=MEMORY_MODEL,
+                max_tokens=1024,
+                system=(
+                    "You are a conversation summarizer. Given a portion of a conversation between "
+                    "a user and a voice coding assistant, produce a concise summary that captures "
+                    "the key tasks attempted, decisions made, files modified, and outcomes. "
+                    "Write in past tense. Be specific about file names and technical details. "
+                    "This summary will replace the original exchanges in the conversation history."
+                ),
+                messages=[{"role": "user", "content": "\n\n".join(history_text)}],
+            )
+            self.cost.record("summarize", response.usage, MEMORY_MODEL)
+            await self._send_cost_update()
+            summary = response.content[0].text.strip()
+
+            # Replace older messages with a single summary block
+            summary_block = {
+                "role": "user",
+                "content": f"[Earlier conversation summary]\n{summary}",
+            }
+            self.conversation = [summary_block] + recent
+
+            # Notify the phone UI so the user can see compression happened
+            await self._send({
+                "type": "tool_result",
+                "tool": "summarize_conversation",
+                "summary": f"Compressed {len(older)} older messages into a summary block",
+            })
+
+            print(f"[agent] conversation compressed: {len(older)} messages → 1 summary block")
+
+        except Exception as e:
+            print(f"[agent] summarization error: {e!r}")
 
     # ── streaming agent loop ──────────────────────────────────────────────
 
