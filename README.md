@@ -311,7 +311,7 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 
 - **ARM64 Linux only tested** — x86 Linux should work but is untested. macOS and Windows are not supported.
 - **TLS cert setup is Tailscale-specific** — if using Cloudflare Tunnel, cert provisioning is handled differently. Contributions welcome for other networking setups.
-- **No conversation branching** — conversation history grows linearly with no summarization strategy. Very long sessions will eventually approach context limits.
+- **Single conversation thread** — conversation history is linear with no branching. Context is managed automatically via a sliding window with summarization, but there's no way to fork or revisit earlier branches of a conversation.
 - **piper-tts voices** — the default voice (lessac-medium) is clear but robotic. Other voices available at [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices).
 
 ---
@@ -321,7 +321,6 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 ### Improvements
 - Better visible browser navigation — when browser_open is called with headless=false, Clio should narrate what it sees on screen more fluidly and take natural multi-step browsing actions without needing explicit instructions for each step.
 - Smarter sentence splitting — the current regex splits only on period/exclamation/question mark followed by whitespace, which means version numbers, file paths, URLs, and abbreviations like "e.g." can cause premature or missed splits during TTS streaming.
-- Context management for long sessions — conversation history grows without bound; add summarization or sliding-window trimming before context limits are hit.
 - Multi-voice TTS — allow the user to choose from multiple piper voices in config.sh without editing Python source.
 
 ### New features
@@ -342,4 +341,4 @@ Pull requests welcome. The most valuable contributions are:
 - New tools
 - Alternative networking setups (Cloudflare Tunnel, ngrok, local network without Tailscale)
 - Better STT/TTS model support
-- Context management for long sessions
+- Conversation branching and history navigation
