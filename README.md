@@ -342,3 +342,11 @@ Pull requests welcome. The most valuable contributions are:
 - Alternative networking setups (Cloudflare Tunnel, ngrok, local network without Tailscale)
 - Better STT/TTS model support
 - Conversation branching and history navigation
+
+---
+
+## License
+
+Clio is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPLv3).
+
+Clio is a server you talk to remotely (over Tailscale, from your phone). If you run a modified version of Clio and let others interact with it over a network, the AGPL requires that you make the source code of your modified version available to those users. The source for this project is here: https://github.com/srago87/clio.
