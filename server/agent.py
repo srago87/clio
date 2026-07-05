@@ -301,6 +301,7 @@ class AgentSession:
         self._pending_permission: Optional[asyncio.Future] = None
         self._pending_tool_id: Optional[str] = None
         self.cost = SessionCostTracker()
+        self._tokens_at_last_summarization: int = 0
         TMP_DIR.mkdir(exist_ok=True)
 
     def set_model(self, model_id: str) -> bool:
@@ -471,7 +472,7 @@ class AgentSession:
 
     async def _maybe_summarize_conversation(self, client: anthropic.AsyncAnthropic):
         """Compress older conversation history when token count crosses the threshold."""
-        if self.cost.total_input_tokens < SUMMARIZATION_THRESHOLD:
+        if self.cost.total_input_tokens - self._tokens_at_last_summarization < SUMMARIZATION_THRESHOLD:
             return
 
         # Need at least enough messages to have something to summarize
@@ -550,6 +551,7 @@ class AgentSession:
                 "content": f"[Earlier conversation summary]\n{summary}",
             }
             self.conversation = [summary_block] + recent
+            self._tokens_at_last_summarization = self.cost.total_input_tokens
 
             # Notify the phone UI so the user can see compression happened
             await self._send({

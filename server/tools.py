@@ -7,6 +7,9 @@ import urllib.parse
 import requests
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+_TIMEZONE = os.environ.get("TIMEZONE", "").strip()
 
 _CLIO_DIR = Path(__file__).parent.parent
 _WORK_DIR = _CLIO_DIR.parent
@@ -843,7 +846,11 @@ def _read_url(url: str) -> str:
 
 
 def _get_current_time() -> str:
-    now = datetime.now()
+    try:
+        tz = ZoneInfo(_TIMEZONE) if _TIMEZONE else None
+    except ZoneInfoNotFoundError:
+        tz = None
+    now = datetime.now(tz)
     return now.strftime("%A, %B %d, %Y at %I:%M %p")
 
 

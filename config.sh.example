@@ -1,6 +1,11 @@
 # What would you like Clio to call you? This can be your name, a nickname, or anything you prefer.
 USER_NAME=""
 
+# Your local timezone — lets Clio report the correct local time.
+# Use a tz database name, e.g. America/New_York, America/Los_Angeles, Europe/London.
+# Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+TIMEZONE=""
+
 # Networking mode: "tailscale" (default, recommended) or "cloudflare"
 #
 # tailscale — uses Tailscale for peer-to-peer access. Requires Tailscale installed

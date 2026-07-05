@@ -125,7 +125,42 @@ else
   ok "Skipped — you can set USER_NAME in config.sh later"
 fi
 
-# ── 5. Networking ─────────────────────────────────────────────────────────────
+# ── 5. Timezone ───────────────────────────────────────────────────────────────
+
+step "Timezone"
+
+echo ""
+echo "  What timezone are you in? This lets Clio report the correct local time."
+echo ""
+echo "    1) America/New_York     (Eastern)"
+echo "    2) America/Chicago      (Central)"
+echo "    3) America/Denver       (Mountain)"
+echo "    4) America/Los_Angeles  (Pacific)"
+echo "    5) Europe/London        (GMT/BST)"
+echo "    6) Other                (enter manually)"
+echo ""
+
+while true; do
+  read -rp "  Choose [1-6]: " tz_choice
+  case "$tz_choice" in
+    1) TIMEZONE="America/New_York"; break ;;
+    2) TIMEZONE="America/Chicago"; break ;;
+    3) TIMEZONE="America/Denver"; break ;;
+    4) TIMEZONE="America/Los_Angeles"; break ;;
+    5) TIMEZONE="Europe/London"; break ;;
+    6)
+      read -rp "  Enter timezone (e.g. Europe/Paris, Asia/Tokyo): " TIMEZONE
+      [ -n "$TIMEZONE" ] && break
+      echo "  Timezone cannot be empty."
+      ;;
+    *) echo "  Please enter a number from 1 to 6." ;;
+  esac
+done
+
+sed_i "s|^TIMEZONE=.*|TIMEZONE=\"$TIMEZONE\"|" config.sh
+ok "Timezone set to $TIMEZONE"
+
+# ── 6. Networking ─────────────────────────────────────────────────────────────
 
 step "Networking"
 
