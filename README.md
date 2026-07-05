@@ -328,7 +328,7 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 - Conversation export — let the user ask Clio to save the current session transcript to a file.
 - Notification when long tasks finish — push an ntfy.sh notification to the phone when a multi-step task completes so the user does not have to watch the screen.
 - Tool usage history panel — a collapsible log on the phone UI showing all tool calls made in the current session, beyond the single-line summaries currently shown.
-- Docker image — make setup truly one-command on any Linux host.
+
 - macOS and Windows support — Clio is currently Linux-only.
 - Multi-LLM support — allow users to configure alternative LLM backends (OpenAI, Gemini, local models via Ollama, etc.) instead of being locked to the Anthropic Claude API.
 - Planning framework for multi-session projects — before writing any code, Clio proposes a structured plan and generates design artifacts (data flow diagram, architecture overview, written business rules) for the user to review and redirect verbally. Multiple review rounds before coding begins. Togglable per task: skip the ceremony for small requests ("add a button"), engage it for anything spanning multiple sessions. Artifacts serve as a shared reference between sessions so neither Clio nor the user needs to re-derive intent from the code.
