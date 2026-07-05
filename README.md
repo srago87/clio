@@ -309,7 +309,7 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 
 ## Limitations
 
-- **ARM64 Linux only tested** — x86 Linux should work but is untested. macOS and Windows are not supported.
+- **Linux only** — macOS and Windows are not supported.
 - **TLS cert setup is Tailscale-specific** — if using Cloudflare Tunnel, cert provisioning is handled differently. Contributions welcome for other networking setups.
 - **Single conversation thread** — conversation history is linear with no branching. Context is managed automatically via a sliding window with summarization, but there's no way to fork or revisit earlier branches of a conversation.
 - **piper-tts voices** — the default voice (lessac-medium) is clear but robotic. Other voices available at [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices).
@@ -328,7 +328,7 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 - Conversation export — let the user ask Clio to save the current session transcript to a file.
 - Notification when long tasks finish — push an ntfy.sh notification to the phone when a multi-step task completes so the user does not have to watch the screen.
 - Tool usage history panel — a collapsible log on the phone UI showing all tool calls made in the current session, beyond the single-line summaries currently shown.
-- ARM and x86 Docker image — make setup truly one-command on any Linux host.
+- Docker image — make setup truly one-command on any Linux host.
 - macOS and Windows support — Clio is currently Linux-only.
 - Multi-LLM support — allow users to configure alternative LLM backends (OpenAI, Gemini, local models via Ollama, etc.) instead of being locked to the Anthropic Claude API.
 - Planning framework for multi-session projects — before writing any code, Clio proposes a structured plan and generates design artifacts (data flow diagram, architecture overview, written business rules) for the user to review and redirect verbally. Multiple review rounds before coding begins. Togglable per task: skip the ceremony for small requests ("add a button"), engage it for anything spanning multiple sessions. Artifacts serve as a shared reference between sessions so neither Clio nor the user needs to re-derive intent from the code.
