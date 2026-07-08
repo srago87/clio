@@ -59,6 +59,11 @@ if [ "$TUNNEL_MODE" = "cloudflare" ]; then
 
   # Restart loop — cloudflared stays running across server restarts
   while true; do
+    # Re-source config.sh each iteration so edits (e.g. TTS_ENGINE) made via
+    # restart_server take effect — this loop's env was only set once at launch.
+    set -a
+    source "$CONFIG"
+    set +a
     uvicorn server.main:app --host 127.0.0.1 --port 8765
     EXIT_CODE=$?
     if [ $EXIT_CODE -eq 0 ]; then
@@ -125,6 +130,11 @@ fi
 
 # Restart loop — exit code 0 means clean stop (Ctrl+C), anything else means restart
 while true; do
+  # Re-source config.sh each iteration so edits (e.g. TTS_ENGINE) made via
+  # restart_server take effect — this loop's env was only set once at launch.
+  set -a
+  source "$CONFIG"
+  set +a
   uvicorn server.main:app \
     --host 0.0.0.0 \
     --port 8765 \

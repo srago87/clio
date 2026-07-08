@@ -74,6 +74,7 @@ class _PrintToLog:
         pass
 
 sys.stdout = _PrintToLog()
+sys.stderr = _PrintToLog()
 
 app = FastAPI()
 
