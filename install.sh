@@ -10,8 +10,25 @@ CYAN='\033[0;36m'
 YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m'
+TOTAL_STEPS=8
+CURRENT_STEP=0
 
-step() { echo -e "\n${BOLD}${CYAN}▸ $1${NC}"; }
+progress_bar() {
+  percent="$1"
+  width=20
+  filled=$((percent * width / 100))
+  empty=$((width - filled))
+  bar=""
+  for ((i = 0; i < filled; i++)); do bar="${bar}#"; done
+  for ((i = 0; i < empty; i++)); do bar="${bar}-"; done
+  echo "[$bar] $percent%"
+}
+
+step() {
+  CURRENT_STEP=$((CURRENT_STEP + 1))
+  percent=$((CURRENT_STEP * 100 / TOTAL_STEPS))
+  echo -e "\n${BOLD}${CYAN}▸ $(progress_bar "$percent") $1${NC}"
+}
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 warn() { echo -e "  ${YELLOW}!${NC} $1"; }
 err()  { echo -e "  ${RED}✗${NC} $1"; exit 1; }
@@ -174,7 +191,8 @@ PYEOF
 then
   err ".venv was created with Python < 3.11. Delete .venv and re-run ./install.sh with Python 3.11+ available."
 fi
-pip install -q -r server/requirements.txt
+echo "  Installing Python dependencies (this can take a few minutes)..."
+pip install --progress-bar on -r server/requirements.txt
 ok "Dependencies installed"
 
 # ── 2. TTS voice model ────────────────────────────────────────────────────────
@@ -525,6 +543,7 @@ ok "Whisper model ready"
 
 echo ""
 echo -e "${BOLD}${GREEN}✓ Clio is ready.${NC}"
+echo "  Install progress: 100%"
 echo ""
 echo "  Start:   ./start.sh"
 echo "  Restart: ./restart.sh"
