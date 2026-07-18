@@ -34,6 +34,48 @@ PYEOF
   return 1
 }
 
+install_apt_packages() {
+  if ! command -v sudo &>/dev/null; then
+    err "sudo is required to install system packages with apt. Install Python 3.11+ manually and re-run."
+  fi
+  sudo apt-get update -q
+  sudo apt-get install -y "$@"
+}
+
+apt_has_package() {
+  apt-cache show "$1" >/dev/null 2>&1
+}
+
+install_python_debian() {
+  warn "Python 3.11+ not found — checking apt for a supported Python..."
+
+  for version in 3.12 3.11; do
+    if apt_has_package "python$version" && apt_has_package "python$version-venv"; then
+      echo "  Installing python$version and python$version-venv..."
+      install_apt_packages "python$version" "python$version-venv"
+      hash -r
+      return 0
+    fi
+  done
+
+  err "Python 3.11+ is required, but this distro's apt repositories do not provide python3.11/python3.12 with venv. Use Ubuntu 24.04+, install Python 3.11+ manually, or enable an appropriate distro-supported repository."
+}
+
+install_python_venv_debian() {
+  python_bin="$1"
+  package="${python_bin}-venv"
+
+  if apt_has_package "$package"; then
+    echo "  Installing $package..."
+    install_apt_packages "$package"
+  elif apt_has_package python3-venv; then
+    echo "  Installing python3-venv..."
+    install_apt_packages python3-venv
+  else
+    err "Could not find a venv package for $python_bin. Install ${package} manually and re-run."
+  fi
+}
+
 download_file() {
   url="$1"
   dest_dir="$2"
@@ -88,9 +130,7 @@ if ! PYTHON_BIN="$(pick_python)"; then
   if [ "$OS_NAME" = "Darwin" ]; then
     err "Python 3.11+ is required. Install it with Homebrew: brew install python@3.12, or from https://www.python.org/downloads/macos/."
   elif command -v apt-get &>/dev/null; then
-    warn "Python 3.11+ not found — attempting to install python3-venv..."
-    sudo add-apt-repository -y universe
-    sudo apt-get update -q && sudo apt-get install -y python3-venv
+    install_python_debian
     PYTHON_BIN="$(pick_python)" || err "Python 3.11+ is still not available. Install Python 3.11+ and re-run."
   else
     err "Python 3.11+ is required. Install it and re-run."
@@ -117,8 +157,7 @@ if [ "$create_venv" = "1" ]; then
   if ! "$PYTHON_BIN" -c "import ensurepip" &>/dev/null; then
     warn "python3-venv not found — attempting to install..."
     if command -v apt-get &>/dev/null; then
-      sudo add-apt-repository -y universe
-      sudo apt-get update -q && sudo apt-get install -y python3-venv
+      install_python_venv_debian "$PYTHON_BIN"
     else
       err "Could not install python3-venv automatically. Install it manually and re-run."
     fi

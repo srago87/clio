@@ -82,10 +82,13 @@ On macOS, install Python 3.11+ first if needed:
 brew install python@3.12
 ```
 
-On Debian/Ubuntu, install the venv package first if needed:
+On Debian/Ubuntu, install Python 3.11+ and the matching venv package first if needed. Ubuntu 24.04 provides Python 3.12 by default:
 ```bash
-sudo apt update && sudo apt install python3-venv
+sudo apt update
+sudo apt install python3.12 python3.12-venv
 ```
+
+On older distros where `python3.12` is unavailable, use `python3.11 python3.11-venv` if your distro provides it. Clio's installer will try normal apt packages automatically, but it will not add third-party Python repositories for you.
 
 Then clone and set up:
 ```bash
