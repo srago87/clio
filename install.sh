@@ -10,24 +10,13 @@ CYAN='\033[0;36m'
 YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m'
-TOTAL_STEPS=8
+TOTAL_STEPS=10
 CURRENT_STEP=0
-
-progress_bar() {
-  percent="$1"
-  width=20
-  filled=$((percent * width / 100))
-  empty=$((width - filled))
-  bar=""
-  for ((i = 0; i < filled; i++)); do bar="${bar}#"; done
-  for ((i = 0; i < empty; i++)); do bar="${bar}-"; done
-  echo "[$bar] $percent%"
-}
 
 step() {
   CURRENT_STEP=$((CURRENT_STEP + 1))
   percent=$((CURRENT_STEP * 100 / TOTAL_STEPS))
-  echo -e "\n${BOLD}${CYAN}▸ $(progress_bar "$percent") $1${NC}"
+  echo -e "\n${BOLD}${CYAN}▸ Step $CURRENT_STEP/$TOTAL_STEPS ($percent%) - $1${NC}"
 }
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 warn() { echo -e "  ${YELLOW}!${NC} $1"; }
