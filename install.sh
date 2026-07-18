@@ -521,10 +521,31 @@ echo "  Downloading Whisper model: $WHISPER_MODEL (this may take a moment)..."
 WHISPER_MODEL="$WHISPER_MODEL" MODELS_DIR="$MODELS_DIR" .venv/bin/python3 - <<'PYEOF'
 import os
 from pathlib import Path
+from huggingface_hub import snapshot_download
 from faster_whisper import WhisperModel
+from faster_whisper.utils import _MODELS
+
 model_name = os.environ.get("WHISPER_MODEL", "small")
 models_dir = Path(os.environ.get("MODELS_DIR", "server/models"))
-WhisperModel(model_name, compute_type="int8", download_root=str(models_dir))
+repo_id = model_name if "/" in model_name else _MODELS[model_name]
+
+snapshot_download(
+    repo_id,
+    cache_dir=str(models_dir),
+    allow_patterns=[
+        "config.json",
+        "preprocessor_config.json",
+        "model.bin",
+        "tokenizer.json",
+        "vocabulary.*",
+    ],
+)
+WhisperModel(
+    model_name,
+    compute_type="int8",
+    download_root=str(models_dir),
+    local_files_only=True,
+)
 PYEOF
 ok "Whisper model ready"
 
