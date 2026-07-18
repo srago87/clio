@@ -522,6 +522,7 @@ WHISPER_MODEL="$WHISPER_MODEL" MODELS_DIR="$MODELS_DIR" .venv/bin/python3 - <<'P
 import os
 from pathlib import Path
 from huggingface_hub import snapshot_download
+from tqdm.auto import tqdm
 from faster_whisper import WhisperModel
 from faster_whisper.utils import _MODELS
 
@@ -529,9 +530,17 @@ model_name = os.environ.get("WHISPER_MODEL", "small")
 models_dir = Path(os.environ.get("MODELS_DIR", "server/models"))
 repo_id = model_name if "/" in model_name else _MODELS[model_name]
 
+class InstallerTqdm(tqdm):
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("ascii", True)
+        kwargs.setdefault("ncols", 80)
+        kwargs.setdefault("bar_format", "{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]")
+        super().__init__(*args, **kwargs)
+
 snapshot_download(
     repo_id,
     cache_dir=str(models_dir),
+    tqdm_class=InstallerTqdm,
     allow_patterns=[
         "config.json",
         "preprocessor_config.json",
