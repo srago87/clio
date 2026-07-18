@@ -2,6 +2,23 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+OS_NAME="$(uname -s)"
+
+find_tailscale() {
+  if command -v tailscale &>/dev/null; then
+    command -v tailscale
+    return 0
+  fi
+  for candidate in \
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale" \
+    "/Applications/Tailscale.app/Contents/MacOS/tailscale"; do
+    if [ -x "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
 
 CONFIG="$SCRIPT_DIR/config.sh"
 if [ ! -f "$CONFIG" ]; then
@@ -14,6 +31,10 @@ set +a
 
 TUNNEL_MODE="${TUNNEL_MODE:-tailscale}"
 
+if [ ! -f ".venv/bin/activate" ]; then
+  echo "Error: .venv not found. Run ./install.sh first."
+  exit 1
+fi
 source .venv/bin/activate
 
 # ── Cloudflare Tunnel mode ────────────────────────────────────────────────────
@@ -81,31 +102,47 @@ fi
 
 # ── Tailscale mode (default) ──────────────────────────────────────────────────
 
-if ! tailscale ip -4 &>/dev/null; then
-  echo "Error: Tailscale not connected. Run 'tailscale up', or set TUNNEL_MODE=cloudflare in config.sh."
+TAILSCALE_BIN="$(find_tailscale || true)"
+if [ -z "$TAILSCALE_BIN" ]; then
+  if [ "$OS_NAME" = "Darwin" ]; then
+    echo "Error: Tailscale CLI not found."
+    echo "  Install Tailscale for macOS from https://tailscale.com/download"
+    echo "  Or with Homebrew: brew install --cask tailscale"
+  else
+    echo "Error: tailscale command not found. Install Tailscale, or set TUNNEL_MODE=cloudflare in config.sh."
+  fi
+  exit 1
+fi
+
+if ! "$TAILSCALE_BIN" ip -4 &>/dev/null; then
+  if [ "$OS_NAME" = "Darwin" ]; then
+    echo "Error: Tailscale is not connected. Open the Tailscale app, sign in, then retry."
+  else
+    echo "Error: Tailscale not connected. Run 'tailscale up', or set TUNNEL_MODE=cloudflare in config.sh."
+  fi
   exit 1
 fi
 
 URL="https://$TAILSCALE_HOST:8765"
 
-# Provision TLS cert. Snap-confined Tailscale can't write to arbitrary paths, so we try:
-#   1. Direct write to project dir (works for non-snap Tailscale)
-#   2. sudo tailscale cert (bypasses snap confinement)
-#   3. ~/snap/tailscale/common/ (snap's own writable data dir)
+# Provision TLS cert.
 CERT_OK=false
-if tailscale cert --cert-file "$SCRIPT_DIR/clio.crt" --key-file "$SCRIPT_DIR/clio.key" "$TAILSCALE_HOST" 2>/dev/null; then
+CERT_ERR=""
+if "$TAILSCALE_BIN" cert --cert-file "$SCRIPT_DIR/clio.crt" --key-file "$SCRIPT_DIR/clio.key" "$TAILSCALE_HOST" 2>/dev/null; then
   CERT_OK=true
-elif sudo tailscale cert --cert-file "$SCRIPT_DIR/clio.crt" --key-file "$SCRIPT_DIR/clio.key" "$TAILSCALE_HOST" 2>/dev/null; then
+elif [ "$OS_NAME" != "Darwin" ] && sudo "$TAILSCALE_BIN" cert --cert-file "$SCRIPT_DIR/clio.crt" --key-file "$SCRIPT_DIR/clio.key" "$TAILSCALE_HOST" 2>/dev/null; then
   sudo chown "$(id -u):$(id -g)" "$SCRIPT_DIR/clio.crt" "$SCRIPT_DIR/clio.key" 2>/dev/null
   CERT_OK=true
-else
+elif [ "$OS_NAME" != "Darwin" ]; then
   SNAP_CERT_DIR="$HOME/snap/tailscale/common"
-  CERT_ERR=$(tailscale cert --cert-file "$SNAP_CERT_DIR/clio.crt" --key-file "$SNAP_CERT_DIR/clio.key" "$TAILSCALE_HOST" 2>&1)
+  CERT_ERR=$("$TAILSCALE_BIN" cert --cert-file "$SNAP_CERT_DIR/clio.crt" --key-file "$SNAP_CERT_DIR/clio.key" "$TAILSCALE_HOST" 2>&1)
   if [ $? -eq 0 ]; then
     cp "$SNAP_CERT_DIR/clio.crt" "$SCRIPT_DIR/clio.crt"
     cp "$SNAP_CERT_DIR/clio.key" "$SCRIPT_DIR/clio.key"
     CERT_OK=true
   fi
+else
+  CERT_ERR=$("$TAILSCALE_BIN" cert --cert-file "$SCRIPT_DIR/clio.crt" --key-file "$SCRIPT_DIR/clio.key" "$TAILSCALE_HOST" 2>&1 || true)
 fi
 
 if ! $CERT_OK; then

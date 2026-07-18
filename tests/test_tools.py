@@ -56,7 +56,7 @@ def test_read_file_truncates_large_content(tmp_path, monkeypatch):
 def test_write_file_creates_file(tmp_path):
     path = str(tmp_path / "out.txt")
     result = _write_file(path, "hello")
-    assert "Wrote" in result
+    assert "Wrote" in result["text"]
     assert Path(path).read_text() == "hello"
 
 
@@ -79,7 +79,7 @@ def test_edit_file_exact_match(tmp_path):
     f = tmp_path / "code.py"
     f.write_text("def foo():\n    pass\n")
     result = _edit_file(str(f), "pass", "return 42")
-    assert result.startswith("Replaced")
+    assert result["text"].startswith("Replaced")
     assert f.read_text() == "def foo():\n    return 42\n"
 
 
@@ -87,7 +87,7 @@ def test_edit_file_fuzzy_whitespace_match(tmp_path):
     f = tmp_path / "code.py"
     f.write_text("def foo():   \n    pass\n")
     result = _edit_file(str(f), "def foo():", "def bar():")
-    assert result.startswith("Replaced")
+    assert result["text"].startswith("Replaced")
     assert "bar" in f.read_text()
 
 
@@ -95,7 +95,7 @@ def test_edit_file_not_found_returns_error(tmp_path):
     f = tmp_path / "code.py"
     f.write_text("hello world")
     result = _edit_file(str(f), "nonexistent string xyz", "replacement")
-    assert result.startswith("Error")
+    assert result["text"].startswith("Error")
 
 
 def test_edit_file_replaces_only_first_occurrence(tmp_path):
@@ -112,7 +112,7 @@ def test_edit_file_partial_context_mismatch_error(tmp_path):
     f.write_text("def foo():\n    return 1\n")
     # First line exists but surrounding context doesn't match
     result = _edit_file(str(f), "def foo():\n    return 99\n", "def bar():\n    return 99\n")
-    assert result.startswith("Error")
+    assert result["text"].startswith("Error")
 
 
 # ── _list_directory ───────────────────────────────────────────────────────────
@@ -182,16 +182,16 @@ def test_read_file_blocks_sensitive_path(fake_sensitive):
 
 def test_write_file_blocks_sensitive_path(fake_sensitive):
     result = _write_file(str(fake_sensitive / "injected"), "evil")
-    assert "Error" in result
-    assert "not allowed" in result
+    assert "Error" in result["text"]
+    assert "not allowed" in result["text"]
 
 
 def test_edit_file_blocks_sensitive_path(fake_sensitive):
     target = fake_sensitive / "config"
     target.write_text("old content")
     result = _edit_file(str(target), "old", "new")
-    assert "Error" in result
-    assert "not allowed" in result
+    assert "Error" in result["text"]
+    assert "not allowed" in result["text"]
 
 
 def test_delete_file_blocks_sensitive_path(fake_sensitive):

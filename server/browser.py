@@ -6,12 +6,13 @@
 browser.py — Playwright-based browser controller for Clio.
 
 Manages a single browser session at a time. Supports headless and visible
-(headed) modes. Headed mode requires a DISPLAY environment variable to be set
-(e.g. via Xvfb or a real display).
+(headed) modes. On Linux, headed mode requires a DISPLAY environment variable
+to be set (e.g. via Xvfb or a real display).
 """
 
 import base64
 import os
+import platform
 from typing import Optional
 
 
@@ -48,7 +49,7 @@ def browser_open(url: str = "", headless: bool = True) -> str:
     _playwright = sync_playwright().start()
 
     launch_kwargs = {"headless": headless}
-    if not headless:
+    if not headless and platform.system() == "Linux":
         os.environ.setdefault("DISPLAY", ":0")
 
     _browser = _playwright.chromium.launch(**launch_kwargs)

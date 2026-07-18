@@ -52,6 +52,7 @@ The agent loop streams Claude's response token by token, splits it into sentence
 
 - **Python 3.11+**
 - **Anthropic API key** — [console.anthropic.com](https://console.anthropic.com)
+- **macOS or Linux** — macOS support is new; Linux remains the most-tested path
 - **Networking** — one of:
   - **Tailscale** *(recommended)* — peer-to-peer, audio stays on your local network
   - **Cloudflare Tunnel** *(easier setup)* — install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), audio routes through Cloudflare
@@ -76,7 +77,12 @@ The installer walks through each step interactively: dependencies, model downloa
 
 ### 1. Clone and create a virtual environment
 
-On Debian/Ubuntu, install the venv package first:
+On macOS, install Python 3.11+ first if needed:
+```bash
+brew install python@3.12
+```
+
+On Debian/Ubuntu, install the venv package first if needed:
 ```bash
 sudo apt update && sudo apt install python3-venv
 ```
@@ -85,7 +91,7 @@ Then clone and set up:
 ```bash
 git clone https://github.com/srago87/clio
 cd clio
-python3 -m venv .venv && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate  # or python3.11
 pip install -r server/requirements.txt
 ```
 
@@ -100,8 +106,8 @@ pip install -r server/requirements.txt
 **Piper (text-to-speech):**
 ```bash
 cd server/models
-wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
-wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
+curl -LO https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+curl -LO https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
 ```
 
 ### 3. Configure
@@ -118,6 +124,11 @@ Edit `config.sh` and set your networking option:
 
 **Option A — Tailscale (for real use):**
 [Tailscale](https://tailscale.com) is a free VPN app that creates a private network between your devices. Install it on your server and your phone ([tailscale.com/download](https://tailscale.com/download)), sign in with the same account on both, and make sure both show as connected in the Tailscale app before proceeding. Then set `TUNNEL_MODE=tailscale` and fill in your `TAILSCALE_HOST`. `start.sh` provisions a TLS cert automatically via `tailscale cert`. This gives you a stable URL, a working PWA, and keeps your audio traffic on your local network. This is the only option that works well for repeated daily use.
+
+On macOS, install and sign in through the Tailscale app first. You can install it from [tailscale.com/download](https://tailscale.com/download), the Mac App Store, or Homebrew:
+```bash
+brew install --cask tailscale
+```
 
 **Option B — Cloudflare Tunnel (just trying it out):**
 Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), then set `TUNNEL_MODE=cloudflare`. No Tailscale or cert setup needed — good for a quick test without committing to Tailscale. The URL changes on each restart, so PWA installation won't persist and you'll need to open a new URL in the browser every time you start Clio.
@@ -309,7 +320,8 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 
 ## Limitations
 
-- **Linux only** — macOS and Windows are not supported.
+- **macOS support is new** — Linux is still the most-tested path. Please report macOS install/runtime issues.
+- **Windows is not supported yet** — WSL may work, but native Windows support is still future work.
 - **TLS cert setup is Tailscale-specific** — if using Cloudflare Tunnel, cert provisioning is handled differently. Contributions welcome for other networking setups.
 - **Single conversation thread** — conversation history is linear with no branching. Context is managed automatically via a sliding window with summarization, but there's no way to fork or revisit earlier branches of a conversation.
 - **piper-tts voices** — the default voice (lessac-medium) is clear but robotic. Other voices available at [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices).
@@ -329,7 +341,7 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 - Notification when long tasks finish — push an ntfy.sh notification to the phone when a multi-step task completes so the user does not have to watch the screen.
 - Tool usage history panel — a collapsible log on the phone UI showing all tool calls made in the current session, beyond the single-line summaries currently shown.
 
-- macOS and Windows support — Clio is currently Linux-only.
+- Windows support — macOS is now supported experimentally; Windows remains future work.
 - Multi-LLM support — allow users to configure alternative LLM backends (OpenAI, Gemini, local models via Ollama, etc.) instead of being locked to the Anthropic Claude API.
 - Planning framework for multi-session projects — before writing any code, Clio proposes a structured plan and generates design artifacts (data flow diagram, architecture overview, written business rules) for the user to review and redirect verbally. Multiple review rounds before coding begins. Togglable per task: skip the ceremony for small requests ("add a button"), engage it for anything spanning multiple sessions. Artifacts serve as a shared reference between sessions so neither Clio nor the user needs to re-derive intent from the code.
 

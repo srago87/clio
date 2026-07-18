@@ -17,6 +17,65 @@ warn() { echo -e "  ${YELLOW}!${NC} $1"; }
 err()  { echo -e "  ${RED}✗${NC} $1"; exit 1; }
 # Cross-platform sed -i (GNU requires no suffix, BSD requires empty string suffix)
 sed_i() { sed -i.bak "$1" "$2" && rm -f "$2.bak"; }
+OS_NAME="$(uname -s)"
+TAILSCALE_MACOS_PKG_URL="https://pkgs.tailscale.com/stable/Tailscale-latest-macos.pkg"
+
+pick_python() {
+  for candidate in python3.13 python3.12 python3.11 python3; do
+    if command -v "$candidate" &>/dev/null && "$candidate" - <<'PYEOF'
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PYEOF
+    then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+download_file() {
+  url="$1"
+  dest_dir="$2"
+  echo "  Downloading $(basename "$url")..."
+  if command -v wget &>/dev/null; then
+    wget -q --show-progress -P "$dest_dir" "$url"
+  elif command -v curl &>/dev/null; then
+    curl -L --fail --progress-bar -o "$dest_dir/$(basename "$url")" "$url"
+  else
+    err "Neither wget nor curl is installed. Install one and re-run."
+  fi
+}
+
+find_tailscale() {
+  if command -v tailscale &>/dev/null; then
+    command -v tailscale
+    return 0
+  fi
+  for candidate in \
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale" \
+    "/Applications/Tailscale.app/Contents/MacOS/tailscale"; do
+    if [ -x "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+install_tailscale_macos() {
+  local tmp_dir pkg
+  tmp_dir="$(mktemp -d)"
+  pkg="$tmp_dir/Tailscale-latest-macos.pkg"
+
+  echo "  Downloading Tailscale for macOS..."
+  curl -L --fail --progress-bar -o "$pkg" "$TAILSCALE_MACOS_PKG_URL"
+  echo "  Installing Tailscale. macOS may ask for your password..."
+  sudo installer -pkg "$pkg" -target /
+  open -a Tailscale >/dev/null 2>&1 || true
+  rm -rf "$tmp_dir"
+  hash -r
+}
 
 echo -e "\n${BOLD}Clio — Install${NC}"
 echo "────────────────────────────────────────"
@@ -25,8 +84,37 @@ echo "────────────────────────�
 
 step "Python virtual environment"
 
+if ! PYTHON_BIN="$(pick_python)"; then
+  if [ "$OS_NAME" = "Darwin" ]; then
+    err "Python 3.11+ is required. Install it with Homebrew: brew install python@3.12, or from https://www.python.org/downloads/macos/."
+  elif command -v apt-get &>/dev/null; then
+    warn "Python 3.11+ not found — attempting to install python3-venv..."
+    sudo add-apt-repository -y universe
+    sudo apt-get update -q && sudo apt-get install -y python3-venv
+    PYTHON_BIN="$(pick_python)" || err "Python 3.11+ is still not available. Install Python 3.11+ and re-run."
+  else
+    err "Python 3.11+ is required. Install it and re-run."
+  fi
+fi
+ok "Using $PYTHON_BIN ($($PYTHON_BIN --version 2>&1))"
+
+create_venv=0
 if [ ! -f ".venv/bin/activate" ]; then
-  if ! python3 -c "import ensurepip" &>/dev/null; then
+  create_venv=1
+elif ! .venv/bin/python - <<'PYEOF'
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PYEOF
+then
+  warn ".venv was created with Python < 3.11; recreating it with $PYTHON_BIN..."
+  rm -rf .venv
+  create_venv=1
+else
+  ok "Virtual environment already exists"
+fi
+
+if [ "$create_venv" = "1" ]; then
+  if ! "$PYTHON_BIN" -c "import ensurepip" &>/dev/null; then
     warn "python3-venv not found — attempting to install..."
     if command -v apt-get &>/dev/null; then
       sudo add-apt-repository -y universe
@@ -35,13 +123,18 @@ if [ ! -f ".venv/bin/activate" ]; then
       err "Could not install python3-venv automatically. Install it manually and re-run."
     fi
   fi
-  python3 -m venv .venv
+  "$PYTHON_BIN" -m venv .venv
   ok "Virtual environment created"
-else
-  ok "Virtual environment already exists"
 fi
 
 source .venv/bin/activate
+if ! python - <<'PYEOF'
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PYEOF
+then
+  err ".venv was created with Python < 3.11. Delete .venv and re-run ./install.sh with Python 3.11+ available."
+fi
 pip install -q -r server/requirements.txt
 ok "Dependencies installed"
 
@@ -53,7 +146,9 @@ MODEL_DIR="$SCRIPT_DIR/server/models"
 mkdir -p "$MODEL_DIR"
 
 # Read TTS_ENGINE from config.sh if it exists, otherwise default to kokoro
-source "$SCRIPT_DIR/config.sh" 2>/dev/null || true
+if [ -f "$SCRIPT_DIR/config.sh" ]; then
+  source "$SCRIPT_DIR/config.sh"
+fi
 TTS_ENGINE="${TTS_ENGINE:-kokoro}"
 
 if [ "$TTS_ENGINE" = "kokoro" ]; then
@@ -64,9 +159,9 @@ if [ "$TTS_ENGINE" = "kokoro" ]; then
   if [ -f "$KOKORO_ONNX" ] && [ -f "$KOKORO_VOICES" ]; then
     ok "Kokoro model files already downloaded"
   else
-    echo "  Downloading Kokoro model files (~310 MB total)..."
-    wget -q --show-progress -P "$MODEL_DIR" "$KOKORO_BASE_URL/kokoro-v1.0.onnx"
-    wget -q --show-progress -P "$MODEL_DIR" "$KOKORO_BASE_URL/voices-v1.0.bin"
+    echo "  Downloading Kokoro model files (~338 MB total; this may take a few minutes)..."
+    download_file "$KOKORO_BASE_URL/kokoro-v1.0.onnx" "$MODEL_DIR"
+    download_file "$KOKORO_BASE_URL/voices-v1.0.bin" "$MODEL_DIR"
     ok "Kokoro model files downloaded"
   fi
 else
@@ -78,8 +173,8 @@ else
     ok "Piper model already downloaded"
   else
     echo "  Downloading en_US-lessac-medium (~63 MB)..."
-    wget -q --show-progress -P "$MODEL_DIR" "$PIPER_BASE_URL/en_US-lessac-medium.onnx"
-    wget -q --show-progress -P "$MODEL_DIR" "$PIPER_BASE_URL/en_US-lessac-medium.onnx.json"
+    download_file "$PIPER_BASE_URL/en_US-lessac-medium.onnx" "$MODEL_DIR"
+    download_file "$PIPER_BASE_URL/en_US-lessac-medium.onnx.json" "$MODEL_DIR"
     ok "Piper model downloaded"
   fi
 fi
@@ -186,28 +281,62 @@ done
 
 sed_i "s|^TUNNEL_MODE=.*|TUNNEL_MODE=\"$TUNNEL_MODE\"|" config.sh
 
+TAILSCALE_BIN="$(find_tailscale || true)"
+if [ "$TUNNEL_MODE" = "tailscale" ] && [ "$OS_NAME" = "Darwin" ] && [ -z "$TAILSCALE_BIN" ]; then
+  warn "Tailscale CLI not found."
+  install_tailscale_macos
+  TAILSCALE_BIN="$(find_tailscale || true)"
+  if [ -z "$TAILSCALE_BIN" ]; then
+    warn "Automatic Tailscale installation did not expose a CLI."
+    echo "  Open Tailscale, finish setup if prompted, then re-run ./install.sh."
+    echo ""
+    read -rp "  Switch to Cloudflare for now instead? [Y/n]: " fallback_cloudflare
+    if [[ "$fallback_cloudflare" =~ ^[Nn] ]]; then
+      err "Tailscale is required for TUNNEL_MODE=tailscale."
+    fi
+    TUNNEL_MODE="cloudflare"
+    sed_i "s|^TUNNEL_MODE=.*|TUNNEL_MODE=\"$TUNNEL_MODE\"|" config.sh
+    ok "Switched networking mode to Cloudflare"
+  else
+    ok "Tailscale installed"
+  fi
+fi
+
 if [ "$TUNNEL_MODE" = "tailscale" ]; then
-  if ! command -v tailscale &>/dev/null; then
+  if [ -z "$TAILSCALE_BIN" ]; then
     echo "  Installing Tailscale..."
-    wget -qO- https://tailscale.com/install.sh | sh
-    command -v tailscale &>/dev/null || err "Tailscale installation failed. Install it manually: https://tailscale.com/download"
+    if command -v curl &>/dev/null; then
+      curl -fsSL https://tailscale.com/install.sh | sh
+    elif command -v wget &>/dev/null; then
+      wget -qO- https://tailscale.com/install.sh | sh
+    else
+      err "Install curl or wget, then re-run."
+    fi
+    TAILSCALE_BIN="$(find_tailscale || true)"
+    [ -n "$TAILSCALE_BIN" ] || err "Tailscale installation failed. Install it manually: https://tailscale.com/download"
     ok "Tailscale installed"
   else
     ok "Tailscale already installed"
   fi
 
-  if ! tailscale ip &>/dev/null; then
+  if ! "$TAILSCALE_BIN" ip &>/dev/null; then
     echo ""
-    echo "  Connect this machine to your Tailscale account."
-    echo "  A browser link will appear below — open it to authenticate."
-    echo ""
-    sudo tailscale up
-    ok "Tailscale connected"
+    if [ "$OS_NAME" = "Darwin" ]; then
+      echo "  Open the Tailscale app, sign in, and make sure this Mac is connected."
+      echo "  Then re-run ./install.sh."
+      err "Tailscale is installed but not connected."
+    else
+      echo "  Connect this machine to your Tailscale account."
+      echo "  A browser link will appear below — open it to authenticate."
+      echo ""
+      sudo "$TAILSCALE_BIN" up
+      ok "Tailscale connected"
+    fi
   else
     ok "Tailscale already connected"
   fi
 
-  ts_host=$(tailscale status --json 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['Self']['DNSName'].rstrip('.'))" 2>/dev/null || true)
+  ts_host=$("$TAILSCALE_BIN" status --json 2>/dev/null | python -c "import json,sys; print(json.load(sys.stdin)['Self']['DNSName'].rstrip('.'))" 2>/dev/null || true)
   if [ -z "$ts_host" ]; then
     echo ""
     echo "  Could not detect hostname automatically."
@@ -222,8 +351,12 @@ if [ "$TUNNEL_MODE" = "tailscale" ]; then
   sed_i "s|^TAILSCALE_HOST=.*|TAILSCALE_HOST=\"$ts_host\"|" config.sh
   ok "Tailscale configured: $ts_host"
 
-  sudo tailscale set --operator="$USER"
-  ok "Tailscale operator set ($USER can provision TLS certs)"
+  if [ "$OS_NAME" = "Darwin" ]; then
+    ok "Tailscale configured"
+  else
+    sudo "$TAILSCALE_BIN" set --operator="$USER"
+    ok "Tailscale operator set ($USER can provision TLS certs)"
+  fi
 else
   if ! command -v cloudflared &>/dev/null; then
     warn "cloudflared not found. Install it before running ./start.sh:"
@@ -332,7 +465,9 @@ fi
 
 step "Whisper speech recognition model"
 
-source "$SCRIPT_DIR/config.sh" 2>/dev/null || true
+if [ -f "$SCRIPT_DIR/config.sh" ]; then
+  source "$SCRIPT_DIR/config.sh"
+fi
 WHISPER_MODEL="${WHISPER_MODEL:-small}"
 MODELS_DIR="$SCRIPT_DIR/server/models"
 
