@@ -184,6 +184,17 @@ echo "  Installing Python dependencies (this can take a few minutes)..."
 pip install --progress-bar on -r server/requirements.txt
 ok "Dependencies installed"
 
+echo "  Installing Playwright browser (Chromium)..."
+if python -m playwright install chromium; then
+  if [ "$OS_NAME" != "Darwin" ] && command -v apt-get &>/dev/null; then
+    sudo "$SCRIPT_DIR/.venv/bin/python" -m playwright install-deps chromium 2>/dev/null \
+      || warn "Could not install Playwright OS dependencies automatically. If the browser tool fails, run: sudo $SCRIPT_DIR/.venv/bin/python -m playwright install-deps chromium"
+  fi
+  ok "Playwright browser installed"
+else
+  warn "Playwright could not install Chromium (unsupported OS/arch, or a network issue). The browser_* tools will not work until this is resolved manually; everything else will still work. See: python -m playwright install chromium"
+fi
+
 # ── 2. TTS voice model ────────────────────────────────────────────────────────
 
 step "TTS voice model"
