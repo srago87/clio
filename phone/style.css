@@ -265,6 +265,7 @@ footer {
 #status-badge.transcribing { border-color: var(--amber);      color: var(--amber); }
 #status-badge.thinking     { border-color: var(--amber);      color: var(--amber); }
 #status-badge.planning     { border-color: var(--violet);     color: var(--violet); }
+#status-badge.working      { border-color: var(--orange);     color: var(--orange); }
 #status-badge.executing    { border-color: var(--orange);     color: var(--orange); }
 #status-badge.speaking     { border-color: var(--cyan);       color: var(--cyan); background: rgba(0,229,255,0.05); }
 #status-badge.waiting      { border-color: var(--violet);     color: var(--violet); }
