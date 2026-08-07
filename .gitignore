@@ -19,6 +19,7 @@ server.log.1
 
 # Runtime directories
 .venv/
+.tools/
 server/__pycache__/
 server/tmp/
 server/logs/

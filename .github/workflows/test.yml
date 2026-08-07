@@ -1,0 +1,63 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+        python-version:
+          - "3.12"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            server/requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r server/requirements.txt -r requirements-dev.txt
+
+      - name: Check shell scripts
+        run: |
+          bash -n install.sh
+          bash -n start.sh
+          bash -n restart.sh
+          bash -n tests/manual/reset.sh
+
+      - name: Check Python imports
+        run: |
+          python - <<'PY'
+          import server.agent
+          import server.browser
+          import server.cost
+          import server.jobs
+          import server.main
+          import server.session
+          import server.stt
+          import server.tools
+          import server.tts
+          print("imports ok")
+          PY
+
+      - name: Run tests
+        run: python -m pytest -q
