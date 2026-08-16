@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 import anthropic
+import httpx
 from fastapi import WebSocket
 
 from .cost import SessionCostTracker, log_usage
@@ -42,12 +43,18 @@ WORK_DIR = CLIO_DIR.parent
 TMP_DIR = Path(__file__).parent / "tmp"
 SOUL_PATH = CLIO_DIR / "soul.md"
 
+# Anthropic SDK default is a 10-minute read timeout — too long to notice a stalled
+# stream (dead connection with no data flowing). 60s is well above normal
+# time-to-first-sentence and inter-chunk gaps, so this only fires on a real stall.
+CLAUDE_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+
 # Split on sentence-ending punctuation followed by whitespace
 SENTENCE_END = re.compile(r'(?<=[.!?])\s+')
 
 _user_name_line = f"The user's name is {USER_NAME}. Address them by name naturally in conversation." if USER_NAME else ""
 
-BASE_SYSTEM_PROMPT = f"""You are Clio, a voice-controlled coding assistant. The user speaks to you \
+BASE_SYSTEM_PROMPT = f"""You are Clio, a voice-controlled coding assistant. You refer to yourself \
+in the first person — "I", "me" — never as "Clio" in the third person. The user speaks to you \
 from their phone and hears your responses read aloud.{(chr(10) + _user_name_line) if _user_name_line else ""} \
 Use plain spoken language — no markdown, no bullet points, no code blocks. Keep responses \
 concise; aim for 1-3 sentences unless a longer explanation is needed. You work in the \
@@ -180,7 +187,7 @@ async def consolidate_sessions(current_log_path=None):
     """
     from .session import VoiceSession
 
-    client = anthropic.AsyncAnthropic()
+    client = anthropic.AsyncAnthropic(timeout=CLAUDE_TIMEOUT)
 
     # Always check memory size at session start, regardless of whether there are logs to consolidate
     if MEMORY_PATH.exists():
@@ -366,7 +373,7 @@ class AgentSession:
 
     async def process_audio(self, audio_bytes: bytes):
         """Full pipeline: audio → STT → Claude streaming agent loop → TTS chunks → phone."""
-        client = anthropic.AsyncAnthropic()
+        client = anthropic.AsyncAnthropic(timeout=CLAUDE_TIMEOUT)
 
         # Clean up stale audio files from previous turns
         await asyncio.to_thread(_cleanup_old_audio)
@@ -676,6 +683,8 @@ class AgentSession:
         for block in content:
             if block.type != "tool_use":
                 continue
+
+            print(f"[tool] {block.name} {repr(block.input)[:200]}")
 
             # close_connection — drop the WebSocket so the client reconnects
             if block.name == "close_connection":

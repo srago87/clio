@@ -35,7 +35,7 @@ MEMORY_PATH = Path(__file__).parent.parent / "memory.md"
 # Tools that execute without asking the user
 AUTO_APPROVE = {
     "read_file", "list_directory", "search_code", "find_files",
-    "update_memory", "restart_server", "update_scratchpad",
+    "update_memory", "update_scratchpad",
     "web_search", "get_current_time", "read_url", "close_connection",
     "check_job", "stop_job", "list_jobs",
     "browser_get_content", "browser_get_elements", "browser_screenshot",

@@ -237,7 +237,7 @@ Tools are defined in `server/tools.py`. Add new tools by:
 | `get_current_time` | Auto | Current date and time |
 | `update_memory` | Auto | Overwrite `memory.md` |
 | `update_scratchpad` | Auto | Update session working notes |
-| `restart_server` | Auto | Restart the Clio process |
+| `restart_server` | Ask | Restart the Clio process |
 | `close_connection` | Auto | Drop the WebSocket so the client reconnects |
 | `check_job` | Auto | Read output from a background job |
 | `stop_job` | Auto | Kill a background job |
