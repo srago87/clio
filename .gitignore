@@ -6,6 +6,10 @@ memory.md
 soul.md
 journal.md
 
+# OAuth credentials and token script — machine-specific secrets
+server/credentials.json
+server/get_token.py
+
 # First-run tracking — created on first server start
 .first_run_complete
 
