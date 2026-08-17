@@ -31,6 +31,7 @@ from .browser import (
 )
 
 MEMORY_PATH = Path(__file__).parent.parent / "memory.md"
+RESTART_CONTEXT_PATH = Path(__file__).parent / "restart_context.txt"
 
 # Tools that execute without asking the user
 AUTO_APPROVE = {
@@ -215,7 +216,22 @@ TOOL_DEFINITIONS = [
             "Restart the Clio server process. Use this after modifying your own source code "
             "so the changes take effect. The phone will briefly disconnect and auto-reconnect."
         ),
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "context": {
+                    "type": "string",
+                    "description": (
+                        "What you were just working on and what comes next — shown back to "
+                        "you automatically right after the restart so you can resume without "
+                        "asking the user to repeat themselves. This is separate from and in "
+                        "addition to update_memory, which is for facts worth keeping across "
+                        "many future sessions, not just this restart."
+                    ),
+                },
+            },
+            "required": ["context"],
+        },
     },
     {
         "name": "update_memory",
@@ -444,7 +460,7 @@ def execute_tool(name: str, inputs: dict):
         elif name == "update_memory":
             return _update_memory(inputs["content"])
         elif name == "restart_server":
-            return _restart_server()
+            return _restart_server(inputs["context"])
         else:
             return f"Unknown tool: {name}"
     except Exception as e:
@@ -858,7 +874,8 @@ def _get_current_time() -> str:
     return now.strftime("%A, %B %d, %Y at %I:%M %p")
 
 
-def _restart_server() -> str:
+def _restart_server(context: str) -> str:
     import threading
+    RESTART_CONTEXT_PATH.write_text(context)
     threading.Timer(1.0, lambda: os._exit(1)).start()
     return "Restarting server. Reconnect in a few seconds."

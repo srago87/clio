@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from .agent import AgentSession, TMP_DIR, consolidate_sessions
 from .session import VoiceSession
 from .stt import reset_last_transcript
+from .tools import RESTART_CONTEXT_PATH
 from .tts import synthesize, TTS_ENGINE, MODELS_DIR, PIPER_MODEL_NAME
 
 SESSION_TOKEN = secrets.token_hex(16)
@@ -175,10 +176,7 @@ async def serve_audio(filename: str):
     return FileResponse(str(audio_path), media_type="audio/wav")
 
 
-async def _send_greeting(websocket: WebSocket):
-    """Synthesize and stream the intro or greeting audio on first connect."""
-    is_first_run = not FIRST_RUN_FLAG.exists()
-    text = INTRO_TEXT if is_first_run else GREETING_TEXT
+async def _send_static_greeting(websocket: WebSocket, text: str):
     wav_path = TMP_DIR / f"greeting_{uuid.uuid4().hex[:8]}.wav"
     await asyncio.to_thread(synthesize, text, str(wav_path))
     await websocket.send_json({
@@ -187,8 +185,29 @@ async def _send_greeting(websocket: WebSocket):
         "audio_url": f"/audio/{wav_path.name}",
     })
     await websocket.send_json({"type": "turn_end"})
+
+
+async def _send_greeting(websocket: WebSocket, agent: AgentSession):
+    """Speak the intro (first run), a context-aware resumption (restart with
+    context available), or a short generic greeting (returning, no context)."""
+    is_first_run = not FIRST_RUN_FLAG.exists()
     if is_first_run:
+        await _send_static_greeting(websocket, INTRO_TEXT)
         FIRST_RUN_FLAG.touch()
+        return
+
+    has_restart_context = (
+        RESTART_CONTEXT_PATH.exists() and bool(RESTART_CONTEXT_PATH.read_text().strip())
+    )
+    if has_restart_context:
+        try:
+            await agent.generate_greeting()
+            return
+        except Exception as e:
+            print(f"[greeting] ERROR generating restart greeting: {e!r}")
+            # Fall through to the generic greeting below
+
+    await _send_static_greeting(websocket, GREETING_TEXT)
 
 
 @app.websocket("/ws")
@@ -207,8 +226,8 @@ async def websocket_endpoint(websocket: WebSocket):
     # Ask the user whether to save this session to memory
     await websocket.send_json({"type": "memory_prompt"})
 
-    # Send intro (first run) or short greeting (returning)
-    asyncio.create_task(_send_greeting(websocket))
+    # Send intro (first run), context-aware resumption (restart), or short greeting (returning)
+    asyncio.create_task(_send_greeting(websocket, agent))
 
     try:
         async for message in websocket.iter_json():

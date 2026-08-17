@@ -24,6 +24,7 @@ from .tools import (
     TOOL_DEFINITIONS,
     AUTO_APPROVE,
     MEMORY_PATH,
+    RESTART_CONTEXT_PATH,
     execute_tool,
     describe_tool_call,
     summarize_tool_result,
@@ -101,8 +102,11 @@ change reaches the running process before declaring success.
 
 ## Before rebooting the server
 
-Before calling restart_server, update memory.md with what was just worked on — the task, \
-relevant context, and what comes next. The scratchpad doesn't survive reboots; memory does.
+When calling restart_server, pass a `context` argument summarizing what you were just working \
+on — the task, relevant files, and what comes next. It's shown back to you automatically right \
+after the restart so you can resume without asking the user to repeat themselves. This is \
+separate from update_memory, which is for facts worth keeping across many future sessions, not \
+just the next restart.
 
 ## Task classification
 
@@ -120,7 +124,16 @@ Let each answer inform the next question.
 
 Give a brief spoken summary in past tense — "I added", "I updated", "I changed" — covering \
 which files changed and what the change does. If a server restart is required, say so. \
-If not, don't mention it. Never use future tense in a completion summary."""
+If not, don't mention it. Never use future tense in a completion summary.
+
+## Startup greeting after a server restart
+
+When a restart context is provided, read it carefully and reason about what's known versus \
+what might be unclear or have changed. If the context is sufficient to jump straight back in, \
+do so with a targeted resumption — don't ask generic questions like "is that still where we \
+left off?" If there are genuine gaps or ambiguities, ask one specific focused question based \
+on the actual content of the file. Be transparent about limited context — don't project false \
+confidence. Never give a generic greeting when restart context is available."""
 
 
 def build_stable_prompt() -> str:
@@ -136,11 +149,31 @@ def build_stable_prompt() -> str:
 
 
 def build_volatile_prompt(scratchpad: str = "") -> str:
-    """Volatile content: current date + scratchpad. Not cached."""
+    """Volatile content: current date + scratchpad. Not cached.
+
+    Deliberately does NOT touch restart context — this is called on every turn
+    of a normal conversation, including the tool-result follow-up turn that
+    runs immediately after restart_server itself, in the same still-alive
+    process, well before the actual restart happens. If restart context were
+    read (and single-use-consumed) here, that follow-up turn would delete it
+    before the next process ever gets a chance to use it. Only
+    generate_greeting() — which runs exclusively on the fresh post-restart
+    connection — reads and consumes it.
+    """
     parts = [f"## Current date:\n{datetime.now().strftime('%A, %B %d, %Y')}"]
     if scratchpad:
         parts.append(f"## Your scratchpad for this session:\n{scratchpad}")
     return "\n\n".join(parts)
+
+
+def _consume_restart_context() -> str:
+    """Read and clear the restart context file. Single-use, and meant only for
+    the startup greeting right after a restart — see build_volatile_prompt."""
+    if not RESTART_CONTEXT_PATH.exists():
+        return ""
+    text = RESTART_CONTEXT_PATH.read_text().strip()
+    RESTART_CONTEXT_PATH.unlink(missing_ok=True)
+    return text
 
 
 def _extract_sentences(buffer: str) -> tuple[list[str], str]:
@@ -306,6 +339,7 @@ class AgentSession:
         self.voice_session = voice_session
         self.diff_manager = diff_manager
         self.conversation: list = []
+        self.last_assistant_text: str = ""
         self.scratchpad: str = ""
         self.memory_enabled: bool = False
         self.model: str = DEFAULT_MODEL
@@ -402,6 +436,8 @@ class AgentSession:
             print(f"[agent] streaming Claude API ({self.model})")
             response_text = await self._stream_agent_loop(client)
             print(f"[agent] turn complete ({len(response_text)} chars)")
+            if response_text:
+                self.last_assistant_text = response_text
 
             # 3. Log + signal end of turn so phone re-enables mic
             if self.memory_enabled:
@@ -664,6 +700,76 @@ class AgentSession:
 
         return full_text
 
+    async def generate_greeting(self) -> str:
+        """Speak the startup greeting after a server restart. Uses restart context if
+        available, so Clio resumes with a targeted message instead of a generic one.
+        Does not touch self.conversation — this happens before any real exchange, so
+        there's nothing to keep continuity with yet.
+        """
+        client = anthropic.AsyncAnthropic(timeout=CLAUDE_TIMEOUT)
+        text_buffer = ""
+        full_text = ""
+        sentence_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+        async def synthesis_worker():
+            while True:
+                sentence = await sentence_queue.get()
+                if sentence is None:
+                    break
+                await self._send_audio_chunk(sentence)
+
+        worker = asyncio.create_task(synthesis_worker())
+
+        volatile_prompt = build_volatile_prompt(self.scratchpad)
+        restart_context = _consume_restart_context()
+        if restart_context:
+            volatile_prompt = f"## Restart context:\n{restart_context}\n\n{volatile_prompt}"
+
+        async with client.messages.stream(
+            model=self.model,
+            max_tokens=1024,
+            system=[
+                {
+                    "type": "text",
+                    "text": build_stable_prompt(),
+                    "cache_control": {"type": "ephemeral"},
+                },
+                {
+                    "type": "text",
+                    "text": volatile_prompt,
+                },
+            ],
+            messages=[{
+                "role": "user",
+                "content": (
+                    "[The server just restarted and reconnected. Give your startup "
+                    "greeting now, following the restart-greeting instructions in your "
+                    "system prompt.]"
+                ),
+            }],
+        ) as stream:
+            async for text in stream.text_stream:
+                text_buffer += text
+                full_text += text
+                sentences, text_buffer = _extract_sentences(text_buffer)
+                for sentence in sentences:
+                    if sentence:
+                        await sentence_queue.put(sentence)
+
+            remainder = text_buffer.strip()
+            if remainder:
+                await sentence_queue.put(remainder)
+
+            await sentence_queue.put(None)
+            await worker
+
+            response = await stream.get_final_message()
+            self.cost.record("turn", response.usage, self.model)
+            await self._send_cost_update()
+
+        await self._send({"type": "turn_end"})
+        return full_text
+
     async def _send_audio_chunk(self, text: str):
         """Synthesize one sentence and push it to the phone immediately."""
         wav_path = await asyncio.to_thread(self._synthesize, text)
@@ -779,7 +885,7 @@ class AgentSession:
             f.write(audio_bytes)
             tmp_path = f.name
         try:
-            return transcribe(tmp_path)
+            return transcribe(tmp_path, self.last_assistant_text)
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 

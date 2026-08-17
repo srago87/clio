@@ -7,6 +7,9 @@ const SILENCE_THRESHOLD      = 0.015;  // RMS level below which is silence
 const SILENCE_DURATION_MS    = 1000;   // ms of quiet before auto-send
 const MIN_SPEECH_DURATION_MS = 400;    // ignore clips shorter than this
 const LEVEL_CHECK_INTERVAL_MS = 80;    // how often to poll audio level
+const POST_TURN_COOLDOWN_MS  = 400;    // ignore mic input right after playback ends —
+                                        // gives any acoustic tail/echo of Clio's own
+                                        // voice time to decay before we start listening
 
 // ── State ─────────────────────────────────────────────────────────────────
 let ws = null;
@@ -18,6 +21,7 @@ let micSourceNode = null;
 let isSpeaking = false;
 let speechStartTime = null;
 let silenceTimer = null;
+let micCooldownUntil = 0;
 let headerChunk = null;
 let pendingChunks = [];
 let processingExchange = false;
@@ -370,6 +374,7 @@ async function playNextChunk() {
 
 function finishTurn() {
   pendingChunks = [];  // discard audio accumulated during backend processing
+  micCooldownUntil = Date.now() + POST_TURN_COOLDOWN_MS;
   stopWave();
   stopSpeakingGlow();
   stopStatusTimer();
@@ -626,6 +631,11 @@ function startListening() {
 
 function checkAudioLevel() {
   if (!analyser || processingExchange || micMuted) return;
+  if (Date.now() < micCooldownUntil) {
+    pendingChunks = [];  // drop audio captured during the post-playback cooldown —
+                          // likely acoustic tail/echo of Clio's own voice, not the user
+    return;
+  }
   if (audioContext.state === "suspended") audioContext.resume();
 
   const data = new Uint8Array(analyser.fftSize);
