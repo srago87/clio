@@ -3,6 +3,7 @@
 # See LICENSE in the project root, or <https://www.gnu.org/licenses/>.
 
 import asyncio
+import json
 import os
 import re
 import tempfile
@@ -20,15 +21,26 @@ from .cost import SessionCostTracker, log_usage
 from .stt import transcribe
 from .tts import synthesize
 from .session import VoiceSession, LOGS_DIR
+from .terminal_session import terminal_session
 from .tools import (
     TOOL_DEFINITIONS,
     AUTO_APPROVE,
+    DISPLAY_TOOLS,
+    TERMINAL_SESSION_TOOLS,
+    TOOL_PANES,
     MEMORY_PATH,
     RESTART_CONTEXT_PATH,
     execute_tool,
     describe_tool_call,
     summarize_tool_result,
 )
+
+# display_* tool name -> the AgentDriver method it calls on Clio's display
+DISPLAY_METHOD_BY_TOOL = {
+    "display_get_state": "getState",
+    "display_list_actions": "listActions",
+    "display_invoke_action": "invokeAction",
+}
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 MEMORY_MODEL  = "claude-haiku-4-5-20251001"
@@ -54,12 +66,17 @@ SENTENCE_END = re.compile(r'(?<=[.!?])\s+')
 
 _user_name_line = f"The user's name is {USER_NAME}. Address them by name naturally in conversation." if USER_NAME else ""
 
-BASE_SYSTEM_PROMPT = f"""You are Clio, a voice-controlled coding assistant. You refer to yourself \
-in the first person — "I", "me" — never as "Clio" in the third person. The user speaks to you \
-from their phone and hears your responses read aloud.{(chr(10) + _user_name_line) if _user_name_line else ""} \
+BASE_SYSTEM_PROMPT = f"""You are Clio, an agent — not a coding assistant, and not a separate \
+assistant that merely operates a desktop on the user's behalf. You communicate with the user \
+two ways: your voice, always, and your display, when it's open. The user communicates with \
+you by voice, and what they say will often refer to whatever your display is currently \
+showing. You refer to yourself in the first person — "I", "me" — never as "Clio" in the third \
+person. The user's phone is how they speak to you and hear you; your display has no voice \
+input of its own.{(chr(10) + _user_name_line) if _user_name_line else ""} \
 Use plain spoken language — no markdown, no bullet points, no code blocks. Keep responses \
-concise; aim for 1-3 sentences unless a longer explanation is needed. You work in the \
-user's coding environment at {WORK_DIR}. Your own source code lives at {CLIO_DIR}.
+concise; aim for 1-3 sentences unless a longer explanation is needed. {WORK_DIR} is the \
+user's project workspace. Your own source — the display, the server, everything that makes \
+you up — lives at {CLIO_DIR}.
 
 When using tools, say nothing until the task is fully complete. No announcements, no \
 narration, no intermediate summaries. One sentence when done: what changed or what you found.
@@ -68,26 +85,50 @@ narration, no intermediate summaries. One sentence when done: what changed or wh
 
 Use get_current_time whenever the answer depends on knowing the current time. Never guess.
 
-Use update_scratchpad to track your current task, files modified, and next steps — rewrite \
-it fully each time. After every write_file, edit_file, or bash_command that changes system \
-state, log what ran and what changed before continuing to the next step. Before touching a \
-file you've modified earlier this session, re-read your scratchpad first — it's your ground \
-truth for what's already been done.
+Use update_scratchpad to track your current task and next steps — rewrite it fully each time \
+before moving on; it's your ground truth for what's already been done this session.
 
 Use update_memory for facts worth keeping across future sessions: user preferences, project \
 decisions, anything worth recalling later.
 
-When editing files: use write_file to replace an entire file, edit_file only for small \
-targeted changes (a few lines). If the change touches more than ~20 lines, use write_file \
-with the full new content.
+Use bash_command for shell commands — building, testing, git, poking around, whatever's \
+fastest to figure out what's actually going on. Use run_background instead for anything that \
+runs indefinitely (dev servers, watchers, long builds); it returns a job ID immediately — use \
+check_job to read its output and stop_job to kill it. Explore freely when that's genuinely \
+the fastest way to understand something; this is a capability you have, not a replacement \
+for judgment about what's actually needed. Everything you run this way shows up live in the \
+terminal pane on the display, mirrored exactly as you saw it — that's why you don't narrate \
+command-by-command in voice, the pane is where the process lives, your voice is for the \
+conclusion.
 
-For long-running processes (dev servers, watchers, build processes): use run_background — \
-it returns a job ID immediately. Use check_job to read output, stop_job to kill it. Never \
-use bash_command for a process that runs indefinitely.
+There's no separate read_file, list_directory, search_code, or find_files anymore — use \
+bash_command for those too (cat, ls, grep, find). Keeping a dedicated reading/searching tool \
+alongside unrestricted shell access was redundant; read and investigate through the terminal \
+the same way you'd do anything else there.
 
-Use search_code to find a function, class, or pattern before editing. Use find_files to \
-locate files by name or extension. Use read_file with start_line/end_line to read just the \
-relevant section of a large file.
+write_file, edit_file, and delete_file are not currently available — unlike reading, editing \
+is a mutation the user should be able to review, and that capability is still routing through \
+either the file manager pane's own actions or the diff viewer instead of standalone tool \
+calls (see "My display" below). If a request needs to change a file, say so plainly rather \
+than improvising with bash_command or claiming a tool you don't have.
+
+## My display
+
+The display is how you communicate visually with the user — panes it renders that they can \
+see, alongside what you say. It's a prototype that grows over time: check display_get_state \
+for what's actually there rather than assuming from earlier in the conversation, and don't \
+treat however few panes exist as a fixed or deliberately minimal design — it's early, not \
+finished. The goal is for it to work like an intent-based interface: the user says what they \
+want and you act on it directly through the display, rather than them navigating it \
+themselves the way a traditional GUI would require.
+
+display_get_state, display_list_actions, and display_invoke_action are how you see and act on \
+the display: check display_get_state before assuming what's shown — the user's words will \
+often refer to it directly — call display_list_actions to see exactly what's invocable right \
+now (never guess an action name), then display_invoke_action to act. If the display isn't \
+open, these tools return an error saying so; don't keep retrying, just tell the user. Prefer \
+these tools over asking the user to describe their screen when the request is about what's \
+showing (navigating, selecting, filtering what's on it).
 
 ## Before reading or editing
 
@@ -334,10 +375,11 @@ async def compress_memory(client: anthropic.AsyncAnthropic, current_text: str = 
 
 
 class AgentSession:
-    def __init__(self, websocket: WebSocket, voice_session: VoiceSession, diff_manager=None):
+    def __init__(self, websocket: WebSocket, voice_session: VoiceSession, diff_manager=None, display_link=None):
         self.websocket = websocket
         self.voice_session = voice_session
         self.diff_manager = diff_manager
+        self.display_link = display_link
         self.conversation: list = []
         self.last_assistant_text: str = ""
         self.scratchpad: str = ""
@@ -402,6 +444,24 @@ class AgentSession:
         finally:
             self._pending_permission = None
             self._pending_tool_id = None
+
+    # ── display link ────────────────────────────────────────────────────────
+
+    async def _call_display_tool(self, name: str, inputs: dict) -> tuple[str, bool]:
+        """Returns (content, is_error)."""
+        if not self.display_link or not self.display_link.connected:
+            return "The display is not currently open.", True
+        method = DISPLAY_METHOD_BY_TOOL[name]
+        args = (
+            {"name": inputs.get("name", ""), "args": inputs.get("args", {})}
+            if name == "display_invoke_action"
+            else {}
+        )
+        try:
+            result = await self.display_link.call(method, args)
+            return json.dumps(result), False
+        except Exception as e:
+            return f"Error: {e}", True
 
     # ── main entry point ──────────────────────────────────────────────────
 
@@ -581,8 +641,9 @@ class AgentSession:
                 max_tokens=1024,
                 system=(
                     "You are a conversation summarizer. Given a portion of a conversation between "
-                    "a user and a voice coding assistant, produce a concise summary that captures "
-                    "the key tasks attempted, decisions made, files modified, and outcomes. "
+                    "a user and Clio, a voice-controlled agent, produce a concise "
+                    "summary that captures the key tasks attempted, decisions made, files modified, "
+                    "and outcomes. "
                     "Write in past tense. Be specific about file names and technical details. "
                     "This summary will replace the original exchanges in the conversation history."
                 ),
@@ -837,7 +898,45 @@ class AgentSession:
                     continue
 
             await self._status("working", description)
+
+            if block.name in DISPLAY_TOOLS:
+                content, is_error = await self._call_display_tool(block.name, block.input)
+                print(f"[display] {block.name} -> {content[:200]}")
+                await self._send({
+                    "type": "tool_result",
+                    "tool": block.name,
+                    "summary": content[:80] if is_error else description,
+                })
+                entry = {"type": "tool_result", "tool_use_id": block.id, "content": content}
+                if is_error:
+                    entry["is_error"] = True
+                tool_results.append(entry)
+                continue
+
+            if block.name in TERMINAL_SESSION_TOOLS:
+                content = await terminal_session.run_command_as_clio(
+                    block.input["command"], block.input.get("cwd")
+                )
+                print(f"[terminal] {block.name} -> {content[:200]}")
+                await self._send({
+                    "type": "tool_result",
+                    "tool": block.name,
+                    "summary": description,
+                })
+                tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": content})
+                continue
+
             result = await asyncio.to_thread(execute_tool, block.name, block.input)
+
+            # Mirror job-management activity (run_background/check_job/
+            # stop_job/list_jobs — bash_command itself goes through the
+            # shared session directly above, not this path) into the same
+            # terminal history as the interactive session, live — same
+            # description and result Claude itself just read, not a
+            # re-derived summary.
+            if TOOL_PANES.get(block.name) == "terminal":
+                text = result if isinstance(result, str) else str(result)
+                await terminal_session.write_system_line(f"$ {description}\n{text}")
 
             # Compress memory if an explicit update_memory call pushed it over the limit
             if block.name == "update_memory":
