@@ -27,6 +27,18 @@ def test_get_local_ip_falls_back_to_hostname_lookup_when_unroutable():
     fake_sock.close.assert_called_once()
 
 
+def test_get_local_ip_rejects_loopback_fallback():
+    # Debian/Ubuntu's default /etc/hosts maps the hostname to 127.0.1.1 —
+    # that's never reachable from another device, so it must not be
+    # returned as a usable LAN IP.
+    fake_sock = MagicMock()
+    fake_sock.connect.side_effect = OSError("network unreachable")
+    with patch("socket.socket", return_value=fake_sock), \
+         patch("socket.gethostbyname", return_value="127.0.1.1"), \
+         patch("socket.gethostname", return_value="clio-box"):
+        assert get_local_ip() is None
+
+
 def test_print_qr_renders_ascii_art(capsys):
     print_qr("https://192.168.1.1:8765")
     out = capsys.readouterr().out
