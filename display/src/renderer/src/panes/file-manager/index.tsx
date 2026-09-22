@@ -115,7 +115,9 @@ function useFileManager(): PaneHandle {
         run: (args) => {
           const target = String(args.target ?? '')
           const hits = matchItems(target, visible)
-          if (hits.length === 1) openItem(hits[0])
+          if (hits.length === 0) throw new Error(`No item matches "${target}"`)
+          if (hits.length > 1) throw new Error(`"${target}" matches ${hits.length} items — be more specific`)
+          openItem(hits[0])
         }
       },
       {
@@ -123,8 +125,11 @@ function useFileManager(): PaneHandle {
         describe: 'select an item by name or tag number',
         params: ['target'],
         run: (args) => {
-          const hits = matchItems(String(args.target ?? ''), visible)
-          if (hits.length === 1) selectItem(hits[0])
+          const target = String(args.target ?? '')
+          const hits = matchItems(target, visible)
+          if (hits.length === 0) throw new Error(`No item matches "${target}"`)
+          if (hits.length > 1) throw new Error(`"${target}" matches ${hits.length} items — be more specific`)
+          selectItem(hits[0])
         }
       },
       {

@@ -912,16 +912,24 @@ class AgentSession:
                 continue
 
             if block.name in TERMINAL_SESSION_TOOLS:
-                content = await terminal_session.run_command_as_clio(
-                    block.input["command"], block.input.get("cwd")
-                )
+                try:
+                    content = await terminal_session.run_command_as_clio(
+                        block.input["command"], block.input.get("cwd")
+                    )
+                    is_error = False
+                except Exception as e:
+                    content = f"Error: {e}"
+                    is_error = True
                 print(f"[terminal] {block.name} -> {content[:200]}")
                 await self._send({
                     "type": "tool_result",
                     "tool": block.name,
-                    "summary": description,
+                    "summary": content[:80] if is_error else description,
                 })
-                tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": content})
+                entry = {"type": "tool_result", "tool_use_id": block.id, "content": content}
+                if is_error:
+                    entry["is_error"] = True
+                tool_results.append(entry)
                 continue
 
             result = await asyncio.to_thread(execute_tool, block.name, block.input)

@@ -42,6 +42,11 @@ class TerminalSession:
         self._pending: dict | None = None  # {"pattern", "future", "buffer"} while a bash_command call is in flight
         self._interrupt_event = asyncio.Event()
         self._start_lock = asyncio.Lock()
+        # Guards the whole run_command_as_clio lifecycle (owner + self._pending),
+        # not just start-up — terminal_session is a module-level singleton shared
+        # by every AgentSession, so two concurrent bash_command calls without this
+        # would both set self._pending and the second would clobber the first.
+        self._command_lock = asyncio.Lock()
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -101,6 +106,15 @@ class TerminalSession:
                 os.close(self._master_fd)
             except OSError:
                 pass
+        if self._pid is not None:
+            # EOF on the master fd means the child is gone or about to be —
+            # reap it so it doesn't sit around as a zombie under this
+            # long-running server process until the next respawn (and the
+            # one after that, ...).
+            try:
+                os.waitpid(self._pid, 0)
+            except OSError:
+                pass
         self._master_fd = None
         self._pid = None
         self.owner = "human"
@@ -155,7 +169,10 @@ class TerminalSession:
             return
         try:
             fcntl.ioctl(self._master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-        except OSError:
+        except (OSError, struct.error):
+            # struct.error: client-supplied rows/cols out of range or the
+            # wrong type — not an OSError subclass, so it needs its own arm
+            # or a malformed resize message crashes this connection's loop.
             pass
 
     def request_interrupt(self):
@@ -165,58 +182,68 @@ class TerminalSession:
 
     async def run_command_as_clio(self, command: str, cwd: str | None = None) -> str:
         await self.ensure_started()
-        await self._set_owner("clio")
-        try:
-            full_command = f"cd {_shell_quote(cwd)} && {command}" if cwd else command
-            token = uuid.uuid4().hex[:12]
-            pattern = re.compile(rf"__CLIO_DONE_{token}__(\d+)")
-            start_marker = f"__CLIO_START_{token}__"
-            loop = asyncio.get_running_loop()
-            future = loop.create_future()
-            self._pending = {"pattern": pattern, "future": future, "buffer": ""}
-            self._interrupt_event.clear()
+        async with self._command_lock:
+            await self._set_owner("clio")
+            try:
+                full_command = f"cd {_shell_quote(cwd)} && {command}" if cwd else command
+                token = uuid.uuid4().hex[:12]
+                pattern = re.compile(rf"__CLIO_DONE_{token}__(\d+)")
+                start_marker = f"__CLIO_START_{token}__"
+                loop = asyncio.get_running_loop()
+                future = loop.create_future()
+                self._pending = {"pattern": pattern, "future": future, "buffer": ""}
+                self._interrupt_event.clear()
 
-            # Bracket the command's real output with markers *printed as output*,
-            # not typed as input — the shell's prompt, echo, and any shell-integration
-            # escape sequences (VTE/iTerm2-style OSC 133/666 sequences observed on
-            # this machine) all happen before the start marker prints, so slicing
-            # between the two markers cleanly excludes all of that noise regardless
-            # of how much of it there is. Far more robust than assuming the echo is
-            # exactly one line.
-            os.write(
-                self._master_fd,
-                f"printf '{start_marker}\\n'; {full_command}; printf '\\n__CLIO_DONE_{token}__%d\\n' $?\n".encode(),
-            )
+                # Bracket the command's real output with markers *printed as output*,
+                # not typed as input — the shell's prompt, echo, and any shell-integration
+                # escape sequences (VTE/iTerm2-style OSC 133/666 sequences observed on
+                # this machine) all happen before the start marker prints, so slicing
+                # between the two markers cleanly excludes all of that noise regardless
+                # of how much of it there is. Far more robust than assuming the echo is
+                # exactly one line.
+                os.write(
+                    self._master_fd,
+                    f"printf '{start_marker}\\n'; {full_command}; printf '\\n__CLIO_DONE_{token}__%d\\n' $?\n".encode(),
+                )
 
-            interrupt_wait = asyncio.ensure_future(self._interrupt_event.wait())
-            done, _pending = await asyncio.wait(
-                [future, interrupt_wait], timeout=COMMAND_TIMEOUT, return_when=asyncio.FIRST_COMPLETED
-            )
+                interrupt_wait = asyncio.ensure_future(self._interrupt_event.wait())
+                done, _pending = await asyncio.wait(
+                    [future, interrupt_wait], timeout=COMMAND_TIMEOUT, return_when=asyncio.FIRST_COMPLETED
+                )
 
-            if future in done:
-                interrupt_wait.cancel()
-                captured, exit_code = future.result()
-                output = _extract_output(captured, start_marker)
-                if len(output) > COMMAND_OUTPUT_LIMIT:
-                    output = output[:COMMAND_OUTPUT_LIMIT] + "\n\n[truncated]"
-                if exit_code != "0":
-                    output = f"{output}\n[exit code {exit_code}]" if output else f"[exit code {exit_code}]"
-                return output or "(no output)"
+                if future in done:
+                    interrupt_wait.cancel()
+                    captured, exit_code = future.result()
+                    output = _extract_output(captured, start_marker)
+                    if len(output) > COMMAND_OUTPUT_LIMIT:
+                        output = output[:COMMAND_OUTPUT_LIMIT] + "\n\n[truncated]"
+                    if exit_code != "0":
+                        output = f"{output}\n[exit code {exit_code}]" if output else f"[exit code {exit_code}]"
+                    return output or "(no output)"
 
-            # Either the human interrupted (Esc) or the command just ran long.
-            if self._master_fd is not None:
-                try:
-                    pgid = os.tcgetpgrp(self._master_fd)
-                    os.killpg(pgid, signal.SIGINT)
-                except OSError:
-                    pass
-            await asyncio.sleep(0.3)  # let the prompt settle before handing control back
-            partial = _extract_output(self._pending["buffer"], start_marker) if self._pending else ""
-            reason = "Interrupted by the user" if interrupt_wait.done() else "Timed out"
-            return f"{reason} before finishing. Output so far:\n{partial}" if partial else f"{reason} before finishing, no output yet."
-        finally:
-            self._pending = None
-            await self._set_owner("human")
+                # Either the human interrupted (Esc) or the command just ran long.
+                if self._master_fd is not None:
+                    try:
+                        pgid = os.tcgetpgrp(self._master_fd)
+                        os.killpg(pgid, signal.SIGINT)
+                        await asyncio.sleep(0.3)
+                        if os.tcgetpgrp(self._master_fd) == pgid:
+                            # Still the same foreground process group — SIGINT
+                            # didn't stop it (ignored/blocked). Escalate to a
+                            # signal it can't catch or ignore, then give it a
+                            # moment to actually die before handing control back.
+                            os.killpg(pgid, signal.SIGKILL)
+                            await asyncio.sleep(0.2)
+                    except OSError:
+                        pass
+                else:
+                    await asyncio.sleep(0.3)  # let the prompt settle before handing control back
+                partial = _extract_output(self._pending["buffer"], start_marker) if self._pending else ""
+                reason = "Interrupted by the user" if interrupt_wait.done() else "Timed out"
+                return f"{reason} before finishing. Output so far:\n{partial}" if partial else f"{reason} before finishing, no output yet."
+            finally:
+                self._pending = None
+                await self._set_owner("human")
 
 
 def _shell_quote(value: str) -> str:
