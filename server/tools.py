@@ -2,8 +2,10 @@
 # Licensed under the GNU Affero General Public License v3.0 or later.
 # See LICENSE in the project root, or <https://www.gnu.org/licenses/>.
 
+import glob as glob_module
 import ipaddress
 import os
+import subprocess
 import time
 import urllib.parse
 import requests
@@ -33,6 +35,7 @@ RESTART_CONTEXT_PATH = Path(__file__).parent / "restart_context.txt"
 
 # Tools that execute without asking the user
 AUTO_APPROVE = {
+    "read_file", "list_directory", "search_code", "find_files",
     "update_memory", "update_scratchpad",
     "web_search", "get_current_time", "read_url", "close_connection",
     "check_job", "stop_job", "list_jobs",
@@ -41,18 +44,15 @@ AUTO_APPROVE = {
     "display_get_state", "display_list_actions", "display_invoke_action",
 }
 
-# Disabled until display/ grows a file-manager pane action surface for them —
-# these are meant to route through it (e.g. file-manager.open) instead of raw
-# tool calls. See the project-clio memory. Shell tools (bash_command and
-# friends) are NOT part of this split: a terminal pane mirrors them live
-# instead of replacing them, so Clio keeps calling them directly rather than
-# through display_invoke_action. read_file/list_directory/search_code/
-# find_files were retired outright (2026-09-08), not just disabled — they're
-# permanently superseded by bash_command (cat/ls/grep/find), not waiting on
-# a pane; see the project-clio memory.
-DISABLED_TOOLS = {
-    "write_file", "edit_file", "delete_file",
-}
+# Tools withheld from Clio entirely (filtered out of TOOL_DEFINITIONS below).
+# read_file/list_directory/search_code/find_files/write_file/edit_file/
+# delete_file were briefly retired in favor of routing everything through
+# bash_command and the terminal pane (2026-09-08) — reverted 2026-09-22 after
+# testing showed terminal-only file navigation was noticeably less smooth
+# than the dedicated tools. The terminal pane stays as one tool among many,
+# not the sole file-access path; see the project-clio memory. Nothing is
+# currently disabled, but the mechanism is kept for whatever's next.
+DISABLED_TOOLS = set()
 
 # The three tools that reach Clio's display action surface (getState /
 # listActions / invokeAction over the display WebSocket link). Handled
@@ -73,6 +73,10 @@ TERMINAL_SESSION_TOOLS = {"bash_command"}
 # it rejects any field it doesn't recognize, which is exactly how the "pane"
 # key ended up in here in the first place instead of inline on each tool.
 TOOL_PANES = {
+    "read_file": None,
+    "list_directory": None,
+    "search_code": None,
+    "find_files": None,
     "write_file": "file-manager",
     "edit_file": "file-manager",
     "bash_command": "terminal",
@@ -102,6 +106,68 @@ TOOL_PANES = {
 }
 
 ALL_TOOL_DEFINITIONS = [
+    {
+        "name": "read_file",
+        "description": (
+            "Read the contents of a file. Optionally specify start_line and end_line "
+            "to read a specific range (1-indexed, inclusive). Line numbers are included "
+            "in output when reading a range."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Absolute or relative path to the file."},
+                "start_line": {"type": "integer", "description": "First line to read (1-indexed). Omit to read from the beginning."},
+                "end_line": {"type": "integer", "description": "Last line to read (1-indexed, inclusive). Omit to read to the end."},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "list_directory",
+        "description": "List files and directories at a path.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Directory path to list."},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "search_code",
+        "description": (
+            "Search for a pattern across files using grep. Returns matching lines with "
+            "file paths and line numbers. Use file_pattern to restrict to specific file "
+            "types (e.g. '*.py', '*.ts'). Excludes .venv, __pycache__, node_modules, "
+            ".git, dist, and build by default."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regex pattern to search for."},
+                "path": {"type": "string", "description": "Directory to search in. Defaults to ~/claude."},
+                "file_pattern": {"type": "string", "description": "Glob pattern to filter files, e.g. '*.py'. Optional."},
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "find_files",
+        "description": (
+            "Find files matching a glob pattern, searched recursively. "
+            "Excludes .venv, __pycache__, node_modules, .git, dist, and build. "
+            "Examples: '*.py', 'agent*.py', '*.ts'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Glob filename pattern, e.g. '*.py' or 'main.*'."},
+                "path": {"type": "string", "description": "Directory to search in. Defaults to ~/claude."},
+            },
+            "required": ["pattern"],
+        },
+    },
     {
         "name": "write_file",
         "description": "Create or overwrite a file with the given content.",
@@ -134,8 +200,9 @@ ALL_TOOL_DEFINITIONS = [
     {
         "name": "bash_command",
         "description": (
-            "Run a shell command. Use for building, testing, installing packages, "
-            "git operations, etc. Output is capped at 10,000 chars."
+            "Run a shell command in the shared interactive terminal, visible live on the "
+            "display's terminal pane. Use for building, testing, installing packages, "
+            "git operations, etc."
         ),
         "input_schema": {
             "type": "object",
@@ -457,7 +524,15 @@ TOOL_DEFINITIONS = [t for t in ALL_TOOL_DEFINITIONS if t["name"] not in DISABLED
 
 def execute_tool(name: str, inputs: dict):
     try:
-        if name == "write_file":
+        if name == "read_file":
+            return _read_file(inputs["path"], inputs.get("start_line"), inputs.get("end_line"))
+        elif name == "list_directory":
+            return _list_directory(inputs["path"])
+        elif name == "search_code":
+            return _search_code(inputs["pattern"], inputs.get("path", ""), inputs.get("file_pattern", ""))
+        elif name == "find_files":
+            return _find_files(inputs["pattern"], inputs.get("path", ""))
+        elif name == "write_file":
             return _write_file(inputs["path"], inputs["content"])
         elif name == "edit_file":
             return _edit_file(inputs["path"], inputs["old_string"], inputs["new_string"])
@@ -511,6 +586,20 @@ def describe_tool_call(name: str, inputs: dict) -> str:
         return f"write {inputs['path']}"
     elif name == "edit_file":
         return f"edit {inputs['path']}"
+    elif name == "read_file":
+        start = inputs.get("start_line")
+        end = inputs.get("end_line")
+        if start or end:
+            return f"read {inputs['path']} lines {start or 1}–{end or 'end'}"
+        return f"read {inputs['path']}"
+    elif name == "list_directory":
+        return f"list {inputs['path']}"
+    elif name == "search_code":
+        path = inputs.get("path", "")
+        return f"search `{inputs['pattern']}`" + (f" in {path}" if path else "")
+    elif name == "find_files":
+        path = inputs.get("path", "")
+        return f"find {inputs['pattern']}" + (f" in {path}" if path else "")
     elif name == "run_background":
         cwd = inputs.get("cwd", "")
         return f"run in background: `{inputs['command']}`" + (f" in {cwd}" if cwd else "")
@@ -575,7 +664,23 @@ def summarize_tool_result(name: str, result) -> str:
         return "Screenshot taken"
     if result.startswith("Error:"):
         return result[:80]
-    if name == "write_file":
+    if name == "read_file":
+        lines = result.count("\n") + 1
+        return f"Read {lines} lines"
+    elif name == "list_directory":
+        items = len(result.strip().split("\n")) if result.strip() else 0
+        return f"Found {items} items"
+    elif name == "search_code":
+        lines = result.strip().split("\n") if result.strip() else []
+        if not lines or result == "No matches found.":
+            return "No matches"
+        return f"{len(lines)} match{'es' if len(lines) != 1 else ''}"
+    elif name == "find_files":
+        lines = result.strip().split("\n") if result.strip() else []
+        if not lines or result == "No files found.":
+            return "No files found"
+        return f"{len(lines)} file{'s' if len(lines) != 1 else ''}"
+    elif name == "write_file":
         return "File written"
     elif name == "edit_file":
         return "Edit applied"
@@ -627,6 +732,7 @@ def summarize_tool_result(name: str, result) -> str:
 
 
 READ_LIMIT = 50_000
+_SEARCH_IGNORE_DIRS = {".venv", "__pycache__", "node_modules", ".git", "dist", "build"}
 
 _SENSITIVE_PREFIXES = [
     Path.home() / ".ssh",
@@ -645,6 +751,78 @@ def _is_safe_path(path: Path) -> bool:
         except ValueError:
             pass
     return True
+
+
+def _read_file(path: str, start_line: int | None = None, end_line: int | None = None) -> str:
+    p = Path(path).expanduser()
+    if not _is_safe_path(p):
+        return f"Error: access to {path} is not allowed"
+    content = p.read_text()
+
+    if start_line is not None or end_line is not None:
+        lines = content.splitlines(keepends=True)
+        start = max(0, (start_line or 1) - 1)
+        end = min(len(lines), end_line or len(lines))
+        selected = lines[start:end]
+        numbered = [f"{start + i + 1}: {line}" for i, line in enumerate(selected)]
+        result = "".join(numbered)
+        if len(result) > READ_LIMIT:
+            return result[:READ_LIMIT] + "\n[truncated]"
+        return result
+
+    if len(content) > READ_LIMIT:
+        return content[:READ_LIMIT] + f"\n\n[truncated — file is {len(content)} chars, showing first {READ_LIMIT}]"
+    return content
+
+
+def _list_directory(path: str) -> str:
+    p = Path(path).expanduser()
+    if not _is_safe_path(p):
+        return f"Error: access to {path} is not allowed"
+    entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name))
+    lines = []
+    for entry in entries:
+        try:
+            entry.name.encode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        prefix = "  " if entry.is_file() else "/"
+        lines.append(f"{prefix}{entry.name}")
+    return "\n".join(lines)
+
+
+def _search_code(pattern: str, path: str = "", file_pattern: str = "") -> str:
+    search_path = str(Path(path).expanduser() if path else _WORK_DIR)
+    cmd = ["grep", "-rn", "--color=never", "-E"]
+    if file_pattern:
+        cmd.extend(["--include", file_pattern])
+    for d in _SEARCH_IGNORE_DIRS:
+        cmd.extend(["--exclude-dir", d])
+    cmd.extend([pattern, search_path])
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    output = result.stdout
+    if not output:
+        if result.stderr:
+            return f"Error: {result.stderr.strip()}"
+        return "No matches found."
+
+    lines = output.splitlines()
+    if len(lines) > 100:
+        output = "\n".join(lines[:100]) + f"\n\n[truncated — showing 100 of {len(lines)} matches]"
+    return output.strip()
+
+
+def _find_files(pattern: str, path: str = "") -> str:
+    search_path = Path(path).expanduser() if path else _WORK_DIR
+    matches = glob_module.glob(str(search_path / "**" / pattern), recursive=True)
+    filtered = [
+        m for m in matches
+        if not _SEARCH_IGNORE_DIRS.intersection(set(Path(m).parts))
+    ]
+    if not filtered:
+        return "No files found."
+    return "\n".join(sorted(filtered)[:500])
 
 
 def _write_file(path: str, content: str) -> dict:
@@ -708,7 +886,6 @@ def _edit_file(path: str, old_string: str, new_string: str) -> dict:
     return {"_diff": False, "text": f"Error: string not found in {path} — read the file first to get the exact text"}
 
 
-# Output is capped at BASH_OUTPUT_LIMIT (10,000 chars); anything beyond that is truncated with a note.
 def _run_background(command: str, cwd: str | None = None) -> str:
     job_id = job_manager.start(command, cwd)
     return f"Started job {job_id}. Use check_job to see output."

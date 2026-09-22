@@ -177,8 +177,8 @@ FIRST_RUN_FLAG = CLIO_DIR / ".first_run_complete"
 INTRO_TEXT = (
     "Hi, I'm Clio. I talk with you by voice, and when my display is open, I can also show and "
     "act on what's there — right now that's a file browser and a document viewer, with more on the way. "
-    "I can run commands directly when that's the fastest way to figure something out — you'll see "
-    "what I'm doing live on the display. I can also search the web and help you think things through. "
+    "I can read and write code, run commands directly when that's the fastest way to figure "
+    "something out, search the web, and help you think things through. "
     "Just press the button and tell me what you need. "
     "You can give me multi-step instructions, ask follow-up questions, or just think out loud — I'll keep up."
 )
