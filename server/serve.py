@@ -22,10 +22,10 @@ import sys
 
 import uvicorn
 
-from server.main import app
+from server.main import app, LOCAL_ONLY_PORT
 
 LOCAL_HOST = "127.0.0.1"
-LOCAL_PORT = 8766
+LOCAL_PORT = LOCAL_ONLY_PORT
 
 
 async def _serve(host: str, port: int, ssl_certfile: str | None, ssl_keyfile: str | None) -> None:
