@@ -319,20 +319,26 @@ step "Networking"
 echo ""
 echo "  How do you want to connect your phone to Clio?"
 echo ""
-echo "    1) Tailscale  — recommended for daily use"
+echo "    1) Local network — recommended, fastest to set up"
+echo "       ./start.sh prints a QR code to scan with your phone's camera."
+echo "       No accounts or installs, but only works while your phone and"
+echo "       this machine share a Wi-Fi network."
+echo ""
+echo "    2) Tailscale     — for access away from home"
 echo "       Stable URL, PWA installable, audio stays on your local network."
 echo ""
-echo "    2) Cloudflare — good for trying it out"
+echo "    3) Cloudflare    — good for trying it out"
 echo "       No Tailscale needed, but URL changes on each restart."
 echo "       PWA installation won't persist."
 echo ""
 
 while true; do
-  read -rp "  Choose [1/2]: " net_choice
+  read -rp "  Choose [1/2/3]: " net_choice
   case "$net_choice" in
-    1) TUNNEL_MODE="tailscale"; break ;;
-    2) TUNNEL_MODE="cloudflare"; break ;;
-    *) echo "  Please enter 1 or 2." ;;
+    1) TUNNEL_MODE="local"; break ;;
+    2) TUNNEL_MODE="tailscale"; break ;;
+    3) TUNNEL_MODE="cloudflare"; break ;;
+    *) echo "  Please enter 1, 2, or 3." ;;
   esac
 done
 
@@ -414,12 +420,19 @@ if [ "$TUNNEL_MODE" = "tailscale" ]; then
     sudo "$TAILSCALE_BIN" set --operator="$USER"
     ok "Tailscale operator set ($USER can provision TLS certs)"
   fi
-else
+elif [ "$TUNNEL_MODE" = "cloudflare" ]; then
   if ! command -v cloudflared &>/dev/null; then
     warn "cloudflared not found. Install it before running ./start.sh:"
     echo "  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
   else
     ok "cloudflared found"
+  fi
+else
+  if ! command -v openssl &>/dev/null; then
+    warn "openssl not found. Install it before running ./start.sh (used to generate the local TLS certificate)."
+  else
+    ok "Local network mode selected — no additional setup needed."
+    echo "  Run ./start.sh and scan the QR code with your phone."
   fi
 fi
 

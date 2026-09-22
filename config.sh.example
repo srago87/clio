@@ -6,15 +6,21 @@ USER_NAME=""
 # Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 TIMEZONE=""
 
-# Networking mode: "tailscale" (default, recommended) or "cloudflare"
+# Networking mode: "local" (default, recommended), "tailscale", or "cloudflare"
 #
-# tailscale — uses Tailscale for peer-to-peer access. Requires Tailscale installed
-#             on both your laptop and phone. Traffic stays on your local network.
+# local — start.sh prints a QR code encoding this machine's local URL. Scan it
+#         with your phone's camera while on the same Wi-Fi network to connect
+#         instantly — no accounts, no installs on your phone. Only works when
+#         your phone and this machine share a network; use tailscale for access
+#         away from home.
+#
+# tailscale — uses Tailscale for peer-to-peer access from anywhere. Requires
+#             Tailscale installed on both your laptop and phone.
 #
 # cloudflare — uses Cloudflare Tunnel (cloudflared). No Tailscale needed, easier
 #              setup, but audio routes through Cloudflare's servers.
 #
-TUNNEL_MODE="tailscale"
+TUNNEL_MODE="local"
 
 # Whisper model for speech recognition.
 # Options: tiny, base, small (default), medium, large
