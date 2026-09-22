@@ -26,7 +26,8 @@ The broader goal is a general-purpose ambient assistant — something reachable 
 - **Amplitude-driven glow** — the speaking glow pulses in real time with the audio amplitude during playback
 - **Persistent memory** — Clio maintains a memory file across sessions, automatically extracting and consolidating facts from each conversation, with compression when the file grows too large
 - **Customizable personality** — edit `soul.md` to change how Clio thinks and speaks
-- **PWA** — installable on your phone's home screen, works over your local network via Tailscale
+- **PWA** — installable on your phone's home screen
+- **QR code onboarding** — scan a code printed in the terminal to connect your phone over local Wi-Fi, no accounts or installs needed
 
 ---
 
@@ -41,7 +42,7 @@ FastAPI Backend (server)
     ├── Kokoro / Piper  (text-to-speech, streamed sentence by sentence)
     └── VoiceSession    (markdown log per connection)
 
-Tailscale → server:8765 (HTTPS/WSS via Tailscale cert)
+Local network (QR code) or Tailscale or Cloudflare Tunnel → server:8765 (HTTPS/WSS)
 ```
 
 The agent loop streams Claude's response token by token, splits it into sentences, and synthesizes + sends each sentence to the phone as it completes — so audio starts playing within a couple of seconds of Claude beginning to respond.
@@ -54,7 +55,8 @@ The agent loop streams Claude's response token by token, splits it into sentence
 - **Anthropic API key** — [console.anthropic.com](https://console.anthropic.com)
 - **macOS or Linux** — macOS support is new; Linux remains the most-tested path
 - **Networking** — one of:
-  - **Tailscale** *(recommended)* — peer-to-peer, audio stays on your local network
+  - **Local network** *(default)* — scan a QR code printed in the terminal, no accounts or installs; requires your phone and server to share a Wi-Fi network
+  - **Tailscale** *(recommended for access away from home)* — peer-to-peer, audio stays on your local network
   - **Cloudflare Tunnel** *(easier setup)* — install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), audio routes through Cloudflare
 - **ntfy.sh** — optional, for push notifications to your phone when Clio starts
 - A phone with a modern browser (iOS Safari or Android Chrome)
@@ -125,15 +127,18 @@ cp soul.example.md soul.md
 
 Edit `config.sh` and set your networking option:
 
-**Option A — Tailscale (for real use):**
-[Tailscale](https://tailscale.com) is a free VPN app that creates a private network between your devices. Install it on your server and your phone ([tailscale.com/download](https://tailscale.com/download)), sign in with the same account on both, and make sure both show as connected in the Tailscale app before proceeding. Then set `TUNNEL_MODE=tailscale` and fill in your `TAILSCALE_HOST`. `start.sh` provisions a TLS cert automatically via `tailscale cert`. This gives you a stable URL, a working PWA, and keeps your audio traffic on your local network. This is the only option that works well for repeated daily use.
+**Option A — Local network (default, easiest):**
+Leave `TUNNEL_MODE=local` (the default). No setup needed here — `start.sh` detects this machine's LAN IP, generates a self-signed TLS certificate for it, and prints a QR code to the terminal. Scan it with your phone's camera while it's on the same Wi-Fi network to connect instantly. Only works while your phone and this machine share a network; use Tailscale (below) for access away from home.
+
+**Option B — Tailscale (for access away from home):**
+[Tailscale](https://tailscale.com) is a free VPN app that creates a private network between your devices. Install it on your server and your phone ([tailscale.com/download](https://tailscale.com/download)), sign in with the same account on both, and make sure both show as connected in the Tailscale app before proceeding. Then set `TUNNEL_MODE=tailscale` and fill in your `TAILSCALE_HOST`. `start.sh` provisions a TLS cert automatically via `tailscale cert`. This gives you a stable URL, a working PWA, and keeps your audio traffic on your local network.
 
 On macOS, install and sign in through the Tailscale app first. You can install it from [tailscale.com/download](https://tailscale.com/download), the Mac App Store, or Homebrew:
 ```bash
 brew install --cask tailscale
 ```
 
-**Option B — Cloudflare Tunnel (just trying it out):**
+**Option C — Cloudflare Tunnel (just trying it out):**
 Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), then set `TUNNEL_MODE=cloudflare`. No Tailscale or cert setup needed — good for a quick test without committing to Tailscale. The URL changes on each restart, so PWA installation won't persist and you'll need to open a new URL in the browser every time you start Clio.
 
 You can also optionally set an ntfy.sh topic in `config.sh` to receive a push notification on your phone when Clio starts.
@@ -168,7 +173,7 @@ To restart a running instance: `./restart.sh`
 
 ## Phone setup
 
-Open the URL in your phone's browser. On first visit, accept the TLS certificate warning (Tailscale issues a valid cert, but your phone needs to trust it once).
+Scan the QR code (local network mode) or open the URL directly in your phone's browser. On first visit, accept the TLS certificate warning — Tailscale issues a valid cert that still needs trusting once, while local network mode uses a self-signed cert your phone will always warn about once per install (tap "Visit site" / "Proceed").
 
 **Install as PWA:**
 - iOS: Safari → Share → Add to Home Screen
@@ -325,7 +330,7 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 
 - **macOS support is new** — Linux is still the most-tested path. Please report macOS install/runtime issues.
 - **Windows is not supported yet** — WSL may work, but native Windows support is still future work.
-- **TLS cert setup is Tailscale-specific** — if using Cloudflare Tunnel, cert provisioning is handled differently. Contributions welcome for other networking setups.
+- **TLS cert setup differs per networking mode** — local network mode uses a self-signed cert (one-time browser warning), Tailscale provisions a valid cert automatically, and Cloudflare Tunnel handles it differently still.
 - **Single conversation thread** — conversation history is linear with no branching. Context is managed automatically via a sliding window with summarization, but there's no way to fork or revisit earlier branches of a conversation.
 - **piper-tts voices** — the default voice (lessac-medium) is clear but robotic. Other voices available at [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices).
 
@@ -339,7 +344,7 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 - Multi-voice TTS — allow the user to choose from multiple piper voices in config.sh without editing Python source.
 
 ### New features
-- Local WiFi access via mDNS — serve Clio at a stable `clio.local` URL on the home network with zero configuration, no Tailscale required; remote access via Tailscale or Cloudflare Tunnel remains available as an upgrade path.
+- mDNS hostname for local network mode — serve Clio at a stable `clio.local` URL instead of a DHCP-assigned IP, so the address doesn't change across restarts.
 - Conversation export — let the user ask Clio to save the current session transcript to a file.
 - Notification when long tasks finish — push an ntfy.sh notification to the phone when a multi-step task completes so the user does not have to watch the screen.
 - Tool usage history panel — a collapsible log on the phone UI showing all tool calls made in the current session, beyond the single-line summaries currently shown.
@@ -354,7 +359,7 @@ Total perceived latency is roughly 2–5 seconds end-to-end.
 
 Pull requests welcome. The most valuable contributions are:
 - New tools
-- Alternative networking setups (Cloudflare Tunnel, ngrok, local network without Tailscale)
+- Alternative networking setups (ngrok, mDNS for local network mode)
 - Better STT/TTS model support
 - Conversation branching and history navigation
 

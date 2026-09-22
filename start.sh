@@ -29,7 +29,7 @@ set -a
 source "$CONFIG"
 set +a
 
-TUNNEL_MODE="${TUNNEL_MODE:-tailscale}"
+TUNNEL_MODE="${TUNNEL_MODE:-local}"
 
 if [ ! -f ".venv/bin/activate" ]; then
   echo "Error: .venv not found. Run ./install.sh first."
@@ -61,6 +61,106 @@ if [ -d "$SCRIPT_DIR/display/node_modules" ]; then
   (cd "$SCRIPT_DIR/display" && npm run dev) >"$DISPLAY_LOG" 2>&1 &
 else
   echo "Note: display/node_modules not found — skipping the display (run 'npm install' in display/ first)."
+fi
+
+# ── Local network mode (default) ──────────────────────────────────────────────
+
+if [ "$TUNNEL_MODE" = "local" ]; then
+  if ! command -v openssl &>/dev/null; then
+    echo "Error: openssl not found. Install it, or set TUNNEL_MODE=tailscale or TUNNEL_MODE=cloudflare in config.sh."
+    exit 1
+  fi
+
+  LOCAL_IP="$(python -m server.local_network)"
+  if [ -z "$LOCAL_IP" ]; then
+    echo "Error: could not detect a local network IP address. Connect to Wi-Fi/Ethernet, or set TUNNEL_MODE=tailscale or TUNNEL_MODE=cloudflare in config.sh."
+    exit 1
+  fi
+
+  LOCAL_CERT="$SCRIPT_DIR/clio-local.crt"
+  LOCAL_KEY="$SCRIPT_DIR/clio-local.key"
+
+  # Regenerate the cert if it's missing or was issued for a different IP
+  # (e.g. this machine got a new DHCP lease, or moved to a new network).
+  NEED_CERT=true
+  if [ -f "$LOCAL_CERT" ] && openssl x509 -in "$LOCAL_CERT" -noout -text 2>/dev/null | grep -q "IP Address:$LOCAL_IP"; then
+    NEED_CERT=false
+  fi
+
+  if $NEED_CERT; then
+    echo "Generating local TLS certificate for $LOCAL_IP..."
+    # A config file (rather than -addext) generates the IP SAN in a way
+    # both OpenSSL and macOS's stock LibreSSL understand.
+    OPENSSL_CNF="$(mktemp)"
+    cat >"$OPENSSL_CNF" <<EOF
+[req]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+CN = $LOCAL_IP
+
+[v3_req]
+subjectAltName = @alt_names
+
+[alt_names]
+IP.1 = $LOCAL_IP
+EOF
+    if ! openssl req -x509 -newkey rsa:2048 -sha256 -days 825 -nodes \
+      -keyout "$LOCAL_KEY" -out "$LOCAL_CERT" -config "$OPENSSL_CNF" 2>/dev/null; then
+      rm -f "$OPENSSL_CNF"
+      echo "Error: failed to generate a local TLS certificate."
+      exit 1
+    fi
+    rm -f "$OPENSSL_CNF"
+  fi
+
+  URL="https://$LOCAL_IP:8765"
+
+  echo "Starting Clio..."
+  echo ""
+  echo "  Scan this on your phone (same Wi-Fi network):"
+  echo ""
+  python -m server.local_network qr "$URL"
+  echo ""
+  echo "  Or open directly: $URL"
+  echo ""
+  echo "  Your phone will warn that the connection isn't private the first time —"
+  echo "  expected for a local, self-signed certificate. Tap through it (e.g."
+  echo "  \"Visit site\" / \"Proceed\") to continue."
+  echo ""
+
+  if [ -n "$NTFY_TOPIC" ]; then
+    curl -s -X POST "https://ntfy.sh/$NTFY_TOPIC" \
+      -H "Title: Clio is ready" \
+      -H "Priority: default" \
+      -H "Actions: view, Open Clio, $URL" \
+      -d "$URL" >/dev/null 2>&1 &
+  fi
+
+  # Restart loop — exit code 0 means clean stop (Ctrl+C), anything else means restart
+  while true; do
+    # Re-source config.sh each iteration so edits (e.g. TTS_ENGINE) made via
+    # restart_server take effect — this loop's env was only set once at launch.
+    set -a
+    source "$CONFIG"
+    set +a
+    python -m server.serve \
+      --host 0.0.0.0 \
+      --port 8765 \
+      --ssl-certfile "$LOCAL_CERT" \
+      --ssl-keyfile "$LOCAL_KEY"
+    EXIT_CODE=$?
+    if [ $EXIT_CODE -eq 0 ]; then
+      echo "Clio stopped."
+      break
+    fi
+    echo "Clio exited with code $EXIT_CODE, restarting..."
+    sleep 1
+  done
+
+  exit 0
 fi
 
 # ── Cloudflare Tunnel mode ────────────────────────────────────────────────────
@@ -126,7 +226,7 @@ if [ "$TUNNEL_MODE" = "cloudflare" ]; then
   exit 0
 fi
 
-# ── Tailscale mode (default) ──────────────────────────────────────────────────
+# ── Tailscale mode ─────────────────────────────────────────────────────────────
 
 TAILSCALE_BIN="$(find_tailscale || true)"
 if [ -z "$TAILSCALE_BIN" ]; then

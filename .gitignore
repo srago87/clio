@@ -16,6 +16,8 @@ server/get_token.py
 # TLS certificates — generated per machine by start.sh
 clio.crt
 clio.key
+clio-local.crt
+clio-local.key
 
 # Local display-link auth token — regenerated every server start
 server/.session_token
