@@ -17,9 +17,13 @@ server/get_token.py
 clio.crt
 clio.key
 
+# Local display-link auth token — regenerated every server start
+server/.session_token
+
 # Log files
 server.log
 server.log.1
+display.log
 
 # Runtime directories
 .venv/
@@ -42,3 +46,9 @@ server/models/*
 *.pyc
 *.pyo
 *.pyd
+
+# display/ (Electron + Vite)
+display/node_modules/
+display/out/
+display/dist/
+display/.vite/

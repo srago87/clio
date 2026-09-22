@@ -37,6 +37,32 @@ if [ ! -f ".venv/bin/activate" ]; then
 fi
 source .venv/bin/activate
 
+# ── Display (dev convenience) ─────────────────────────────────────────────────
+# Starts Clio's display GUI alongside the server so one command brings up both
+# while testing. This is backwards from the settled design — the display
+# is meant to launch this script, not the other way around (see the
+# project-clio memory) — but that lifecycle piece isn't
+# built yet, so this is the fast path until it is.
+
+DISPLAY_LOG="$SCRIPT_DIR/display.log"
+
+# electron-vite dev spawns several child processes (renderer dev server,
+# main/preload watchers, the Electron binary itself) that don't all share
+# one simple PID to kill — match by command line instead so nothing is
+# left running after this script exits.
+kill_display() {
+  pkill -f "electron-vite" 2>/dev/null
+  pkill -f "$SCRIPT_DIR/display" 2>/dev/null
+}
+trap kill_display EXIT
+
+if [ -d "$SCRIPT_DIR/display/node_modules" ]; then
+  echo "Starting Clio's display (log: $DISPLAY_LOG)..."
+  (cd "$SCRIPT_DIR/display" && npm run dev) >"$DISPLAY_LOG" 2>&1 &
+else
+  echo "Note: display/node_modules not found — skipping the display (run 'npm install' in display/ first)."
+fi
+
 # ── Cloudflare Tunnel mode ────────────────────────────────────────────────────
 
 if [ "$TUNNEL_MODE" = "cloudflare" ]; then
@@ -85,7 +111,7 @@ if [ "$TUNNEL_MODE" = "cloudflare" ]; then
     set -a
     source "$CONFIG"
     set +a
-    uvicorn server.main:app --host 127.0.0.1 --port 8765
+    python -m server.serve --host 127.0.0.1 --port 8765
     EXIT_CODE=$?
     if [ $EXIT_CODE -eq 0 ]; then
       echo "Clio stopped."
@@ -172,7 +198,7 @@ while true; do
   set -a
   source "$CONFIG"
   set +a
-  uvicorn server.main:app \
+  python -m server.serve \
     --host 0.0.0.0 \
     --port 8765 \
     --ssl-certfile clio.crt \

@@ -41,9 +41,71 @@ AUTO_APPROVE = {
     "check_job", "stop_job", "list_jobs",
     "browser_get_content", "browser_get_elements", "browser_screenshot",
     "browser_navigate", "browser_open",
+    "display_get_state", "display_list_actions", "display_invoke_action",
 }
 
-TOOL_DEFINITIONS = [
+# Tools withheld from Clio entirely (filtered out of TOOL_DEFINITIONS below).
+# read_file/list_directory/search_code/find_files/write_file/edit_file/
+# delete_file were briefly retired in favor of routing everything through
+# bash_command and the terminal pane (2026-09-08) — reverted 2026-09-22 after
+# testing showed terminal-only file navigation was noticeably less smooth
+# than the dedicated tools. The terminal pane stays as one tool among many,
+# not the sole file-access path; see the project-clio memory. Nothing is
+# currently disabled, but the mechanism is kept for whatever's next.
+DISABLED_TOOLS = set()
+
+# The three tools that reach Clio's display action surface (getState /
+# listActions / invokeAction over the display WebSocket link). Handled
+# directly in agent.py — real async I/O over a socket, not a plain sync
+# call — so they're absent from execute_tool's dispatch below.
+DISPLAY_TOOLS = {"display_get_state", "display_list_actions", "display_invoke_action"}
+
+# bash_command reaches the shared interactive terminal session (server/
+# terminal_session.py) instead of a one-shot subprocess.run — same reasoning
+# as DISPLAY_TOOLS: real async I/O against a live PTY, not a plain sync call,
+# so it's handled directly in agent.py and absent from execute_tool below.
+TERMINAL_SESSION_TOOLS = {"bash_command"}
+
+# Which pane (existing or planned) represents each tool visually, or None if a
+# pane will never make sense for it — nothing to render, no persistent object,
+# no benefit from a visual surface. Kept separate from ALL_TOOL_DEFINITIONS
+# because that list is sent to the Anthropic API verbatim as the tool schema —
+# it rejects any field it doesn't recognize, which is exactly how the "pane"
+# key ended up in here in the first place instead of inline on each tool.
+TOOL_PANES = {
+    "read_file": None,
+    "list_directory": None,
+    "search_code": None,
+    "find_files": None,
+    "write_file": "file-manager",
+    "edit_file": "file-manager",
+    "bash_command": "terminal",
+    "run_background": "terminal",
+    "check_job": "terminal",
+    "stop_job": "terminal",
+    "list_jobs": "terminal",
+    "delete_file": "file-manager",
+    "restart_server": None,
+    "update_memory": "document",
+    "get_current_time": None,
+    "web_search": "browser",
+    "read_url": "browser",
+    "update_scratchpad": "ambient",
+    "browser_open": "browser",
+    "browser_navigate": "browser",
+    "browser_click": "browser",
+    "browser_type": "browser",
+    "browser_screenshot": "browser",
+    "browser_get_content": "browser",
+    "browser_get_elements": "browser",
+    "browser_close": "browser",
+    "close_connection": None,
+    "display_get_state": None,
+    "display_list_actions": None,
+    "display_invoke_action": None,
+}
+
+ALL_TOOL_DEFINITIONS = [
     {
         "name": "read_file",
         "description": (
@@ -138,8 +200,9 @@ TOOL_DEFINITIONS = [
     {
         "name": "bash_command",
         "description": (
-            "Run a shell command. Use for building, testing, installing packages, "
-            "git operations, etc. Output is capped at 10,000 chars."
+            "Run a shell command in the shared interactive terminal, visible live on the "
+            "display's terminal pane. Use for building, testing, installing packages, "
+            "git operations, etc."
         ),
         "input_schema": {
             "type": "object",
@@ -406,7 +469,57 @@ TOOL_DEFINITIONS = [
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
+    {
+        "name": "display_get_state",
+        "description": (
+            "Get a snapshot of Clio's display. The \"visible\" field is the one fact "
+            "that answers \"what is the user looking at right now\" — it's either "
+            "\"overview\" (the grid of all panes, shown by default) or the id of "
+            "one pane. A pane existing, or having been focused before, does NOT mean "
+            "it's open — only visible == that pane's id means the user is actually "
+            "looking at it. If visible is \"overview\" and the user asks about a "
+            "specific pane, it is NOT open; use display_invoke_action with "
+            "\"shell.focusPane\" to bring it into view before saying otherwise. Also "
+            "returns a one-line summary of each pane. Use this before acting on the "
+            "display, or when the user refers to something on their screen. Errors if "
+            "the display isn't currently open."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "display_list_actions",
+        "description": (
+            "List every action currently invocable on the display: two shell-level "
+            "actions (\"shell.openOverview\" to show the overview, \"shell.focusPane\" to "
+            "bring one pane into view — takes a paneId argument, from display_get_state) "
+            "plus every pane's own actions, namespaced as \"<pane>.<action>\" (e.g. "
+            "\"file-manager.open\"). Call this to see exactly what's available before "
+            "calling display_invoke_action — don't guess an action name."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "display_invoke_action",
+        "description": (
+            "Invoke one action on the display by its exact name, from "
+            "display_list_actions (e.g. \"file-manager.open\", or \"shell.focusPane\" with "
+            "args {\"paneId\": \"file-manager\"}). Use this to act on whatever the display "
+            "is currently showing, or to bring a pane into view — invoking a pane's own "
+            "action automatically brings that pane into view first."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Namespaced action name, e.g. \"file-manager.open\"."},
+                "args": {"type": "object", "description": "Arguments for the action, if it takes any."},
+            },
+            "required": ["name"],
+        },
+    },
 ]
+
+# What Clio is actually offered — ALL_TOOL_DEFINITIONS with DISABLED_TOOLS filtered out.
+TOOL_DEFINITIONS = [t for t in ALL_TOOL_DEFINITIONS if t["name"] not in DISABLED_TOOLS]
 
 
 def execute_tool(name: str, inputs: dict):
@@ -423,8 +536,6 @@ def execute_tool(name: str, inputs: dict):
             return _write_file(inputs["path"], inputs["content"])
         elif name == "edit_file":
             return _edit_file(inputs["path"], inputs["old_string"], inputs["new_string"])
-        elif name == "bash_command":
-            return _bash_command(inputs["command"], inputs.get("cwd"))
         elif name == "run_background":
             return _run_background(inputs["command"], inputs.get("cwd"))
         elif name == "check_job":
@@ -532,6 +643,12 @@ def describe_tool_call(name: str, inputs: dict) -> str:
         return "close browser"
     elif name == "close_connection":
         return "close connection"
+    elif name == "display_get_state":
+        return "check the display"
+    elif name == "display_list_actions":
+        return "list display actions"
+    elif name == "display_invoke_action":
+        return f"invoke \"{inputs.get('name', '?')}\" on the display"
     return name
 
 
@@ -567,9 +684,6 @@ def summarize_tool_result(name: str, result) -> str:
         return "File written"
     elif name == "edit_file":
         return "Edit applied"
-    elif name == "bash_command":
-        lines = result.strip().split("\n")
-        return lines[-1][:80] if lines else "Done"
     elif name == "run_background":
         return result
     elif name == "check_job":
@@ -618,7 +732,6 @@ def summarize_tool_result(name: str, result) -> str:
 
 
 READ_LIMIT = 50_000
-BASH_OUTPUT_LIMIT = 10_000
 _SEARCH_IGNORE_DIRS = {".venv", "__pycache__", "node_modules", ".git", "dist", "build"}
 
 _SENSITIVE_PREFIXES = [
@@ -773,30 +886,9 @@ def _edit_file(path: str, old_string: str, new_string: str) -> dict:
     return {"_diff": False, "text": f"Error: string not found in {path} — read the file first to get the exact text"}
 
 
-# Output is capped at BASH_OUTPUT_LIMIT (10,000 chars); anything beyond that is truncated with a note.
 def _run_background(command: str, cwd: str | None = None) -> str:
     job_id = job_manager.start(command, cwd)
     return f"Started job {job_id}. Use check_job to see output."
-
-
-def _bash_command(command: str, cwd: str | None = None) -> str:
-    work_dir = Path(cwd).expanduser() if cwd else _WORK_DIR
-    result = subprocess.run(
-        command,
-        shell=True,
-        cwd=str(work_dir),
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    output = result.stdout
-    if result.stderr:
-        output += "\n" + result.stderr
-    output = output.strip() or "(no output)"
-    if len(output) > BASH_OUTPUT_LIMIT:
-        total = len(output)
-        output = output[:BASH_OUTPUT_LIMIT] + f"\n\n[truncated — showing first {BASH_OUTPUT_LIMIT} of {total} chars]"
-    return output
 
 
 def _delete_file(path: str) -> str:
