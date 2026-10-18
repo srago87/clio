@@ -32,10 +32,6 @@ import os
 import subprocess
 from pathlib import Path
 
-import dbus
-from dbus.mainloop.glib import DBusGMainLoop
-from gi.repository import GLib
-
 _SCREENSHOT_PATH = Path(__file__).parent / "tmp" / "computer_screenshot.png"
 _YDOTOOL_SOCKET = Path(__file__).parent / "tmp" / "ydotool.sock"
 
@@ -44,6 +40,12 @@ _CLICK_CODES = {"left": "0xC0", "right": "0xC1", "middle": "0xC2"}
 
 def _capture_portal_screenshot() -> Path:
     """Ask the XDG portal for a screenshot, return the path it wrote to."""
+    # Imported here, not at module load: dbus/gi are Linux-only system bindings,
+    # and tools.py imports this module on every platform.
+    import dbus
+    from dbus.mainloop.glib import DBusGMainLoop
+    from gi.repository import GLib
+
     DBusGMainLoop(set_as_default=True)
     bus = dbus.SessionBus()
     portal = bus.get_object("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop")
