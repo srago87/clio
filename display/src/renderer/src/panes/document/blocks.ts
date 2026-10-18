@@ -65,9 +65,8 @@ export function parseBlocks(markdown: string): Block[] {
 }
 
 /** Resolve a spoken/typed target (a bare tag number, or text matching a block) to
- *  the blocks it could mean — same tiered exact/startsWith/contains/token-overlap
- *  algorithm as file-manager/interpret.ts's matchItems, over block text instead of
- *  item names. */
+ *  the blocks it could mean — tiered exact/startsWith/contains/token-overlap
+ *  matching over block text. */
 export function matchBlocks(target: string, blocks: Block[]): Block[] {
   const t = target.trim()
   const tagNum = t.match(/^(?:tag |block |number )?(\d{1,3})$/i)

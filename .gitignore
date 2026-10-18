@@ -1,14 +1,15 @@
 # Personal config — copy config.sh.example to config.sh and fill it in
 config.sh
 
-# Personal Clio files — copy *.example.md versions as starting points
-memory.md
+# Personal Clio files — copy the *.example versions as starting points
+memory/
 soul.md
 journal.md
 
 # OAuth credentials and token script — machine-specific secrets
 server/credentials.json
 server/get_token.py
+server/gmail_token.json
 
 # First-run tracking — created on first server start
 .first_run_complete
@@ -52,3 +53,7 @@ display/node_modules/
 display/out/
 display/dist/
 display/.vite/
+
+# Runtime logs
+*.log
+start.out

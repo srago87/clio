@@ -88,7 +88,7 @@ The agent loop in `_stream_agent_loop`:
 
 The system prompt is split into two blocks to maximize cache hits:
 
-- **Stable block** (with `cache_control: ephemeral`): base instructions + soul.md + memory.md. Cached after the first call per session. Only busted when memory is updated.
+- **Stable block** (with `cache_control: ephemeral`): base instructions + soul.md + the memory vault (`memory/` — see `server/memory_store.py`). Cached after the first call per session. Only busted when a memory note is updated.
 - **Volatile block** (no cache): current date + scratchpad. Changes frequently, so not worth caching.
 
 ---

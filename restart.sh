@@ -9,4 +9,4 @@ pkill -f "uvicorn server.main:app" || echo "No running instance found."
 
 sleep 1
 
-exec "$SCRIPT_DIR/start.sh"
+exec "$SCRIPT_DIR/start.sh" "$@"

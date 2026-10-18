@@ -195,6 +195,18 @@ else
   warn "Playwright could not install Chromium (unsupported OS/arch, or a network issue). The browser_* tools will not work until this is resolved manually; everything else will still work. See: python -m playwright install chromium"
 fi
 
+echo "  Installing computer-control dependencies (ydotool, D-Bus bindings)..."
+if [ "$OS_NAME" != "Darwin" ] && command -v apt-get &>/dev/null; then
+  if install_apt_packages ydotool pkg-config libdbus-1-dev libglib2.0-dev libgirepository-2.0-dev libcairo2-dev >/dev/null 2>&1 \
+    && pip install --progress-bar on dbus-python PyGObject; then
+    ok "Computer-control dependencies installed"
+  else
+    warn "Could not install computer-control dependencies automatically. computer_screenshot/computer_click/computer_type will not work until this is resolved manually — see server/computer.py."
+  fi
+else
+  warn "Skipping computer-control setup (not Linux, or apt-get unavailable) — computer_screenshot/computer_click/computer_type will be unavailable."
+fi
+
 # ── 2. TTS voice model ────────────────────────────────────────────────────────
 
 step "TTS voice model"
@@ -247,11 +259,11 @@ else
   ok "config.sh already exists"
 fi
 
-if [ ! -f memory.md ]; then
-  cp memory.example.md memory.md
-  ok "memory.md created"
+if [ ! -d memory ]; then
+  cp -r memory.example memory
+  ok "memory/ vault created"
 else
-  ok "memory.md already exists"
+  ok "memory/ vault already exists"
 fi
 
 if [ ! -f soul.md ]; then

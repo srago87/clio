@@ -22,13 +22,13 @@ from .stt import transcribe
 from .tts import synthesize
 from .session import VoiceSession, LOGS_DIR
 from .terminal_session import terminal_session
+from . import memory_store
 from .tools import (
     TOOL_DEFINITIONS,
     AUTO_APPROVE,
     DISPLAY_TOOLS,
     TERMINAL_SESSION_TOOLS,
-    TOOL_PANES,
-    MEMORY_PATH,
+    TERMINAL_MIRRORED_TOOLS,
     RESTART_CONTEXT_PATH,
     execute_tool,
     describe_tool_call,
@@ -66,67 +66,44 @@ SENTENCE_END = re.compile(r'(?<=[.!?])\s+')
 
 _user_name_line = f"The user's name is {USER_NAME}. Address them by name naturally in conversation." if USER_NAME else ""
 
-BASE_SYSTEM_PROMPT = f"""You are Clio, an agent — not a coding assistant, and not a separate \
-assistant that merely operates a desktop on the user's behalf. You communicate with the user \
-two ways: your voice, always, and your display, when it's open. The user communicates with \
-you by voice, and what they say will often refer to whatever your display is currently \
-showing. You refer to yourself in the first person — "I", "me" — never as "Clio" in the third \
-person. The user's phone is how they speak to you and hear you; your display has no voice \
-input of its own.{(chr(10) + _user_name_line) if _user_name_line else ""} \
+BASE_SYSTEM_PROMPT = f"""You are Clio, an agent — not a coding assistant, and not just a remote \
+control for the user's desktop. The user talks with you by voice through their phone and hears \
+you the same way. When you work on their computer, they can watch: shell commands run in a \
+terminal window that opens on their screen, and the browser opens visibly. What they say will \
+often refer to whatever's on their screen. You refer to yourself in the first person — "I", \
+"me" — never as "Clio" in the third person.{(chr(10) + _user_name_line) if _user_name_line else ""} \
 Use plain spoken language — no markdown, no bullet points, no code blocks. Keep responses \
 concise; aim for 1-3 sentences unless a longer explanation is needed. {WORK_DIR} is the \
-user's project workspace. Your own source — the display, the server, everything that makes \
+user's project workspace. Your own source — the document viewer, the server, everything that makes \
 you up — lives at {CLIO_DIR}.
 
-When using tools, say nothing until the task is fully complete. No announcements, no \
-narration, no intermediate summaries. One sentence when done: what changed or what you found.
+When using tools, keep the user oriented with brief spoken updates as you go — a short \
+phrase when you start something or learn something that shapes what comes next ("Let me \
+check your architecture." "Got the URL — downloading now."). One short sentence each; don't \
+read out command output or list every step. Finish with one sentence: what changed or what \
+you found.
 
-## Tool usage
-
-Use get_current_time whenever the answer depends on knowing the current time. Never guess.
-
-Use update_scratchpad to track your current task and next steps — rewrite it fully each time \
-before moving on; it's your ground truth for what's already been done this session.
-
-Use update_memory for facts worth keeping across future sessions: user preferences, project \
+Use update_memory to save facts worth keeping across sessions — user preferences, project \
 decisions, anything worth recalling later.
 
-Use read_file, list_directory, search_code, and find_files for investigating code — they're \
-smoother and more direct than shelling out for the same thing, so prefer them over bash_command \
-for ordinary reading and searching. Use write_file to create or overwrite a file, edit_file for \
-a small targeted change (a few lines) — prefer edit_file when the change is small, write_file \
-when it touches more than ~20 lines. Every write_file/edit_file call broadcasts a before/after \
-diff to the display for review; that's the visual component that matters most, since these are \
-the tools that actually change something on disk.
+## Document viewer
 
-Use bash_command for everything else shell-shaped — building, testing, git, installing \
-packages, poking around, whatever's fastest to figure out what's actually going on when it's \
-not simply "read this file" or "find this pattern." Use run_background instead for anything \
-that runs indefinitely (dev servers, watchers, long builds); it returns a job ID immediately — \
-use check_job to read its output and stop_job to kill it. Explore freely when that's genuinely \
-the fastest way to understand something; this is a capability you have, not a replacement for \
-judgment about what's actually needed. Everything you run this way shows up live in the \
-terminal pane on the display, mirrored exactly as you saw it — that's why you don't narrate \
-command-by-command in voice, the pane is where the process lives, your voice is for the \
-conclusion.
+Your document viewer renders a markdown file live for the user, with every heading, \
+paragraph, and list item numbered so they can point at "block 4" and you know exactly what \
+they mean. It's for them, not you — read documents yourself with read_file or cat. Open one \
+in the viewer when showing the user a document in human-readable form is worth it, like a \
+plan you wrote or notes to go over together, or when they ask to see one.
 
-## My display
+display_get_state tells you what's open in the viewer; display_list_actions lists exactly \
+what's invocable (never guess an action name); display_invoke_action acts. If the viewer \
+isn't open, these tools return an error saying so; don't keep retrying, just tell the user.
 
-The display is how you communicate visually with the user — panes it renders that they can \
-see, alongside what you say. It's a prototype that grows over time: check display_get_state \
-for what's actually there rather than assuming from earlier in the conversation, and don't \
-treat however few panes exist as a fixed or deliberately minimal design — it's early, not \
-finished. The goal is for it to work like an intent-based interface: the user says what they \
-want and you act on it directly through the display, rather than them navigating it \
-themselves the way a traditional GUI would require.
+## Getting things from the web
 
-display_get_state, display_list_actions, and display_invoke_action are how you see and act on \
-the display: check display_get_state before assuming what's shown — the user's words will \
-often refer to it directly — call display_list_actions to see exactly what's invocable right \
-now (never guess an action name), then display_invoke_action to act. If the display isn't \
-open, these tools return an error saying so; don't keep retrying, just tell the user. Prefer \
-these tools over asking the user to describe their screen when the request is about what's \
-showing (navigating, selecting, filtering what's on it).
+Go direct first: read_url for a page's text and links, curl via bash_command for downloads \
+or raw HTML. Use the browser tools only when that fails or the task genuinely needs a \
+browser — content that only appears after JavaScript runs, a login, or clicking and filling \
+things in.
 
 ## Before reading or editing
 
@@ -147,22 +124,17 @@ after the restart so you can resume without asking the user to repeat themselves
 separate from update_memory, which is for facts worth keeping across many future sessions, not \
 just the next restart.
 
-## Task classification
+## Judgment on scope
 
-Short tasks — a targeted edit, quick bug fix, simple question, or anything completable in \
-one or two steps. Just do it.
-
-Long tasks — multiple files, a new feature, significant refactoring. For these:
-1. Ask clarifying questions one at a time until you have a complete picture. Don't assume. \
-Let each answer inform the next question.
-2. Write a plan to your scratchpad and state it clearly before touching any files.
-3. End with an explicit question — "Ready to start?" — and stop. Wait for the user to confirm.
-4. Only after confirmation do you begin execution.
+Use judgment about how big an undertaking is. A targeted edit, a quick bug fix, a simple \
+question — just do it. Before a big, multi-file, or hard-to-undo undertaking — a new feature, \
+a significant refactor — check in with the user first: make sure you actually understand what \
+they want before you start changing things across the codebase.
 
 ## After completing a task
 
 Give a brief spoken summary in past tense — "I added", "I updated", "I changed" — covering \
-which files changed and what the change does. If a server restart is required, say so. \
+what changed and what it does. If a server restart is required, say so. \
 If not, don't mention it. Never use future tense in a completion summary.
 
 ## Startup greeting after a server restart
@@ -181,7 +153,7 @@ def build_stable_prompt() -> str:
     soul = SOUL_PATH.read_text().strip() if SOUL_PATH.exists() else ""
     if soul:
         parts.append(f"## Your soul:\n{soul}")
-    memory = MEMORY_PATH.read_text().strip() if MEMORY_PATH.exists() else ""
+    memory = memory_store.build_memory_prompt()
     if memory:
         parts.append(f"## Your memory from previous sessions:\n{memory}")
     return "\n\n".join(parts)
@@ -245,28 +217,140 @@ output exactly: NO_UPDATE
 Otherwise, output a brief, plain-English summary of what's worth keeping — 1-4 sentences. \
 Do NOT output the full memory file — just the new facts from this exchange."""
 
-MEMORY_SIZE_LIMIT = 10 * 1024  # 10KB
-
 SUMMARIZATION_THRESHOLD = 150_000
 RECENT_EXCHANGES_TO_KEEP = 10      # number of recent user/assistant pairs to leave untouched
 
 
+MEMORY_ROUTING_PROMPT = """\
+You maintain Clio's memory vault: a directory of small typed notes (types: user, feedback, \
+project, reference), each with a lowercase-kebab-case name. You'll be given the current index \
+of notes and some newly-extracted facts. Decide which note(s) each fact belongs to — reuse an \
+existing name from the index whenever a fact fits it, and only invent a new name when nothing \
+fits. Group related facts under the same note rather than fragmenting into many tiny notes.
+
+Respond with only a JSON array, no other text:
+[{"name": "...", "type": "user|feedback|project|reference", "description": "one line for the \
+index", "facts": "what to merge into this note"}]"""
+
+
+async def _route_and_save_facts(
+    client: anthropic.AsyncAnthropic,
+    extracted: str,
+    cost: "SessionCostTracker | None" = None,
+) -> None:
+    """Given newly-extracted facts (prose), decide which memory note(s) they belong to and
+    merge them in — touching only those notes, not the rest of the vault. This is the
+    per-note replacement for the old whole-file merge: same idea (extract, then merge into
+    what's already there), scoped down so one update can't drift or compress unrelated notes.
+    """
+    existing_index = memory_store.INDEX_PATH.read_text().strip() if memory_store.INDEX_PATH.exists() else "(empty — no notes yet)"
+
+    def _record(label: str, usage) -> None:
+        if cost is not None:
+            cost.record(label, usage, MEMORY_MODEL)
+        else:
+            log_usage(label, usage, MEMORY_MODEL)
+
+    routing_response = await client.messages.create(
+        model=MEMORY_MODEL,
+        max_tokens=1024,
+        system=MEMORY_ROUTING_PROMPT,
+        messages=[{
+            "role": "user",
+            "content": f"Current index:\n{existing_index}\n\nNew facts:\n{extracted}",
+        }],
+    )
+    _record("mem-route", routing_response.usage)
+
+    try:
+        routed = json.loads(routing_response.content[0].text.strip())
+    except (json.JSONDecodeError, IndexError):
+        print(f"[memory] routing response wasn't valid JSON, dropping: {routing_response.content[0].text[:200]!r}")
+        return
+
+    for entry in routed:
+        name = entry.get("name", "")
+        note_type = entry.get("type", "")
+        description = entry.get("description", "")
+        facts = entry.get("facts", "")
+        if not (name and note_type and facts):
+            continue
+        if not memory_store.is_valid_name(name) or note_type not in memory_store.VALID_TYPES:
+            print(f"[memory] skipping invalid routed entry: {entry}")
+            continue
+
+        existing_note = memory_store.read_note(name)
+        merge_response = await client.messages.create(
+            model=MEMORY_MODEL,
+            max_tokens=2048,
+            system=(
+                "Merge new facts into one memory note naturally — update what's changed, add "
+                "what's new, preserve everything else unless a new fact directly supersedes it. "
+                "Return only the note's body text (no frontmatter — that's handled separately)."
+            ),
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Existing note (empty if new):\n{existing_note.body if existing_note else ''}\n\n"
+                    f"New facts:\n{facts}"
+                ),
+            }],
+        )
+        _record("mem-merge", merge_response.usage)
+
+        body = merge_response.content[0].text.strip()
+        memory_store.write_note(
+            name, note_type,
+            description or (existing_note.description if existing_note else name),
+            body,
+        )
+        print(f"[memory] note '{name}' updated ({len(body)} bytes)")
+
+        if memory_store.note_size(name) > memory_store.NOTE_SIZE_LIMIT:
+            await _compress_note(client, name, cost)
+
+
+async def _compress_note(
+    client: anthropic.AsyncAnthropic,
+    name: str,
+    cost: "SessionCostTracker | None" = None,
+) -> None:
+    """Summarize one note down when it exceeds NOTE_SIZE_LIMIT — scoped to that note alone,
+    unlike the old design's whole-vault compression event."""
+    note = memory_store.read_note(name)
+    if not note:
+        return
+    try:
+        print(f"[memory] compressing note '{name}' ({len(note.body.encode())} bytes)")
+        response = await client.messages.create(
+            model=MEMORY_MODEL,
+            max_tokens=1024,
+            system=(
+                "This memory note has grown too large. Summarize and compress it — keep the "
+                "most important facts, preferences, and decisions, but eliminate redundancy "
+                "and verbose phrasing. Return only the compressed note body."
+            ),
+            messages=[{"role": "user", "content": note.body}],
+        )
+        if cost is not None:
+            cost.record("mem-compress", response.usage, MEMORY_MODEL)
+        else:
+            log_usage("mem-compress", response.usage, MEMORY_MODEL)
+        compressed = response.content[0].text.strip()
+        memory_store.write_note(name, note.type, note.description, compressed)
+        print(f"[memory] note '{name}' compressed to {len(compressed.encode())} bytes")
+    except Exception as e:
+        print(f"[memory] compression error: {e!r}")
+
+
 async def consolidate_sessions(current_log_path=None):
     """
-    Background task: find all unconsolidated session logs, summarize them into memory.md,
-    mark each as consolidated, then compress memory if it exceeds MEMORY_SIZE_LIMIT.
-    Also compresses memory unconditionally at session start if it exceeds the limit.
+    Background task: find all unconsolidated session logs, summarize them into the memory
+    vault, then mark each as consolidated.
     """
     from .session import VoiceSession
 
     client = anthropic.AsyncAnthropic(timeout=CLAUDE_TIMEOUT)
-
-    # Always check memory size at session start, regardless of whether there are logs to consolidate
-    if MEMORY_PATH.exists():
-        current_size = len(MEMORY_PATH.read_bytes())
-        if current_size > MEMORY_SIZE_LIMIT:
-            print(f"[memory] memory exceeds limit on connect ({current_size} bytes), compressing")
-            await compress_memory(client)
 
     logs = VoiceSession.get_unconsolidated_logs(exclude_path=current_log_path)
     if not logs:
@@ -307,29 +391,7 @@ async def consolidate_sessions(current_log_path=None):
         extracted = response.content[0].text.strip()
 
         if extracted != "NO_UPDATE":
-            current_memory = MEMORY_PATH.read_text().strip() if MEMORY_PATH.exists() else ""
-            merge_response = await client.messages.create(
-                model=MEMORY_MODEL,
-                max_tokens=4096,
-                system=(
-                    "You are a memory management assistant. Merge new facts into the existing "
-                    "memory file naturally — update existing sections where relevant, add new facts "
-                    "where appropriate. Return the complete updated memory file. Preserve all "
-                    "existing content unless a new fact directly supersedes it."
-                ),
-                messages=[{
-                    "role": "user",
-                    "content": f"Current memory:\n{current_memory}\n\nNew facts:\n{extracted}",
-                }],
-            )
-            log_usage("consolidation-merge", merge_response.usage, MEMORY_MODEL)
-            updated_memory = merge_response.content[0].text.strip()
-            MEMORY_PATH.write_text(updated_memory + "\n")
-            print(f"[memory] memory updated ({len(updated_memory)} bytes)")
-
-            # Compress if over size limit
-            if len(updated_memory.encode()) > MEMORY_SIZE_LIMIT:
-                await compress_memory(client, updated_memory)
+            await _route_and_save_facts(client, extracted)
 
     except Exception as e:
         print(f"[memory] consolidation error: {e!r}")
@@ -339,37 +401,6 @@ async def consolidate_sessions(current_log_path=None):
     for log in logs:
         VoiceSession.mark_consolidated(log)
     print(f"[memory] marked {len(logs)} log(s) as consolidated")
-
-
-async def compress_memory(client: anthropic.AsyncAnthropic, current_text: str = None, cost: "SessionCostTracker | None" = None):
-    """Summarize memory.md down when it exceeds the size limit."""
-    try:
-        if current_text is None:
-            current_text = MEMORY_PATH.read_text().strip() if MEMORY_PATH.exists() else ""
-        if not current_text:
-            return
-
-        print(f"[memory] compressing memory ({len(current_text.encode())} bytes)")
-        response = await client.messages.create(
-            model=MEMORY_MODEL,
-            max_tokens=2048,
-            system=(
-                "You are a memory compression assistant. The memory file has grown too large. "
-                "Summarize and compress it — keep the most important facts, preferences, and "
-                "decisions, but eliminate redundancy and verbose phrasing. Aim for under 6KB. "
-                "Return only the compressed memory content."
-            ),
-            messages=[{"role": "user", "content": current_text}],
-        )
-        if cost is not None:
-            cost.record("mem-compress", response.usage, MEMORY_MODEL)
-        else:
-            log_usage("mem-compress", response.usage, MEMORY_MODEL)
-        compressed = response.content[0].text.strip()
-        MEMORY_PATH.write_text(compressed + "\n")
-        print(f"[memory] compressed to {len(compressed.encode())} bytes")
-    except Exception as e:
-        print(f"[memory] compression error: {e!r}")
 
 
 class AgentSession:
@@ -448,7 +479,7 @@ class AgentSession:
     async def _call_display_tool(self, name: str, inputs: dict) -> tuple[str, bool]:
         """Returns (content, is_error)."""
         if not self.display_link or not self.display_link.connected:
-            return "The display is not currently open.", True
+            return "The document viewer is not currently open.", True
         method = DISPLAY_METHOD_BY_TOOL[name]
         args = (
             {"name": inputs.get("name", ""), "args": inputs.get("args", {})}
@@ -542,33 +573,8 @@ class AgentSession:
             if extracted == "NO_UPDATE":
                 return
 
-            # Merge extracted facts into the existing memory file
-            current_memory = MEMORY_PATH.read_text().strip() if MEMORY_PATH.exists() else ""
-            merge_response = await client.messages.create(
-                model=MEMORY_MODEL,
-                max_tokens=4096,
-                system=(
-                    "You are a memory management assistant. You will be given the current memory file "
-                    "and new facts extracted from a recent conversation. Merge the new facts into the "
-                    "memory file naturally — update existing sections where relevant, add new facts where "
-                    "appropriate. Return the complete updated memory file. Preserve all existing content "
-                    "unless a new fact directly supersedes it."
-                ),
-                messages=[{
-                    "role": "user",
-                    "content": f"Current memory:\n{current_memory}\n\nNew facts:\n{extracted}",
-                }],
-            )
-            self.cost.record("mem-merge", merge_response.usage, MEMORY_MODEL)
+            await _route_and_save_facts(client, extracted, self.cost)
             await self._send_cost_update()
-            updated_memory = merge_response.content[0].text.strip()
-            MEMORY_PATH.write_text(updated_memory + "\n")
-            print(f"[agent] memory updated ({len(updated_memory)} bytes)")
-
-            # Compress if over size limit
-            if len(updated_memory.encode()) > MEMORY_SIZE_LIMIT:
-                await compress_memory(client, updated_memory, self.cost)
-                await self._send_cost_update()
 
         except Exception as e:
             print(f"[agent] memory extraction error: {e!r}")
@@ -932,15 +938,16 @@ class AgentSession:
             # terminal history as the interactive session, live — same
             # description and result Claude itself just read, not a
             # re-derived summary.
-            if TOOL_PANES.get(block.name) == "terminal":
+            if block.name in TERMINAL_MIRRORED_TOOLS:
                 text = result if isinstance(result, str) else str(result)
                 await terminal_session.write_system_line(f"$ {description}\n{text}")
 
-            # Compress memory if an explicit update_memory call pushed it over the limit
+            # Compress the specific note if an explicit update_memory call pushed it over
+            # the limit — scoped to that one note, not the whole vault.
             if block.name == "update_memory":
-                updated = MEMORY_PATH.read_text() if MEMORY_PATH.exists() else ""
-                if len(updated.encode()) > MEMORY_SIZE_LIMIT:
-                    await compress_memory(client, updated, self.cost)
+                note_name = block.input.get("name", "")
+                if note_name and memory_store.note_size(note_name) > memory_store.NOTE_SIZE_LIMIT:
+                    await _compress_note(client, note_name, self.cost)
                     await self._send_cost_update()
 
             await self._send({

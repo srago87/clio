@@ -177,10 +177,10 @@ Smoke test for core voice behaviors. Run after any significant change. Takes ~15
 
 - [ ] **Say:** "Remember that my favorite editor is Vim"
   - **Expect:** Clio confirms it will remember this
-  - **Verify:** `memory.md` contains a reference to Vim or the favorite editor
+  - **Verify:** some note under `memory/` contains a reference to Vim or the favorite editor
 
     ```bash
-    grep -i vim memory.md
+    grep -ril vim memory/
     ```
 
 ---

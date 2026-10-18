@@ -72,7 +72,7 @@ class DisplayLink:
             self._ws = None
         for fut in self._pending.values():
             if not fut.done():
-                fut.set_exception(RuntimeError("display disconnected"))
+                fut.set_exception(RuntimeError("document viewer disconnected"))
         self._pending.clear()
 
     @property
@@ -91,7 +91,7 @@ class DisplayLink:
 
     async def call(self, method: str, args: dict | None = None, timeout: float = 10.0):
         if not self._ws:
-            raise RuntimeError("the display is not currently open")
+            raise RuntimeError("the document viewer is not currently open")
         req_id = uuid.uuid4().hex[:8]
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
@@ -175,10 +175,9 @@ CLIO_DIR = Path(__file__).parent.parent
 FIRST_RUN_FLAG = CLIO_DIR / ".first_run_complete"
 
 INTRO_TEXT = (
-    "Hi, I'm Clio. I talk with you by voice, and when my display is open, I can also show and "
-    "act on what's there — right now that's a file browser and a document viewer, with more on the way. "
-    "I can read and write code, run commands directly when that's the fastest way to figure "
-    "something out, search the web, and help you think things through. "
+    "Hi, I'm Clio. I talk with you by voice, and you can watch what I do on your screen as I work. "
+    "I can read and write code, run commands, search the web, open documents for us to look at "
+    "together, and help you think things through. "
     "Just press the button and tell me what you need. "
     "You can give me multi-step instructions, ask follow-up questions, or just think out loud — I'll keep up."
 )
