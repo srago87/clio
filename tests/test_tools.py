@@ -322,7 +322,13 @@ def test_summarize_error_propagates():
 
 
 def test_summarize_update_memory():
-    assert summarize_tool_result("update_memory", "Memory updated (512 bytes)") == "Memory updated"
+    result = "Memory note 'preferences' updated (512 bytes)."
+    assert summarize_tool_result("update_memory", result) == result
+
+
+def test_summarize_delete_memory():
+    result = "Memory note 'preferences' deleted."
+    assert summarize_tool_result("delete_memory", result) == result
 
 
 def test_summarize_list_directory():

@@ -9,6 +9,7 @@ import subprocess
 import time
 import urllib.parse
 import requests
+from urllib.parse import urljoin
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -29,8 +30,14 @@ from .browser import (
     browser_get_elements as _browser_get_elements,
     browser_close as _browser_close,
 )
+from .computer import (
+    computer_screenshot as _computer_screenshot,
+    computer_click as _computer_click,
+    computer_type as _computer_type,
+)
+from . import memory_store
+from . import gmail
 
-MEMORY_PATH = Path(__file__).parent.parent / "memory.md"
 RESTART_CONTEXT_PATH = Path(__file__).parent / "restart_context.txt"
 
 # Tools that execute without asking the user
@@ -41,9 +48,40 @@ AUTO_APPROVE = {
     "check_job", "stop_job", "list_jobs",
     "browser_get_content", "browser_get_elements", "browser_screenshot",
     "browser_navigate", "browser_open",
+    "display_get_state", "display_list_actions", "display_invoke_action",
+    "computer_screenshot",
+    "delete_memory",
+    "email_search", "email_read", "email_list_labels", "email_draft",
 }
 
-TOOL_DEFINITIONS = [
+# Tools withheld from Clio entirely (filtered out of TOOL_DEFINITIONS below).
+# read_file/list_directory/search_code/find_files/write_file/edit_file/
+# delete_file were briefly retired in favor of routing everything through
+# bash_command and the terminal pane (2026-09-08) — reverted 2026-09-22 after
+# testing showed terminal-only file navigation was noticeably less smooth
+# than the dedicated tools. The shared terminal stays as one tool among many,
+# not the sole file-access path; see the project-clio memory. Nothing is
+# currently disabled, but the mechanism is kept for whatever's next.
+DISABLED_TOOLS = set()
+
+# The three tools that reach Clio's display action surface (getState /
+# listActions / invokeAction over the display WebSocket link). Handled
+# directly in agent.py — real async I/O over a socket, not a plain sync
+# call — so they're absent from execute_tool's dispatch below.
+DISPLAY_TOOLS = {"display_get_state", "display_list_actions", "display_invoke_action"}
+
+# bash_command reaches the shared interactive terminal session (server/
+# terminal_session.py) instead of a one-shot subprocess.run — same reasoning
+# as DISPLAY_TOOLS: real async I/O against a live PTY, not a plain sync call,
+# so it's handled directly in agent.py and absent from execute_tool below.
+TERMINAL_SESSION_TOOLS = {"bash_command"}
+
+# Job-management tools don't run in the shared shell, but their results are
+# written into its history anyway so they show up in the terminal window
+# alongside everything else Clio ran.
+TERMINAL_MIRRORED_TOOLS = {"run_background", "check_job", "stop_job", "list_jobs"}
+
+ALL_TOOL_DEFINITIONS = [
     {
         "name": "read_file",
         "description": (
@@ -108,7 +146,12 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "write_file",
-        "description": "Create or overwrite a file with the given content.",
+        "description": (
+            "Create or overwrite a file with the given content. Broadcasts a before/after "
+            "diff to the display for review. Prefer edit_file for a small, targeted change "
+            "(a few lines); use write_file when the change touches more than ~20 lines or "
+            "the file doesn't exist yet."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -123,7 +166,8 @@ TOOL_DEFINITIONS = [
         "description": (
             "Replace a specific string in a file with a new string. Tries an exact match "
             "first; if not found, retries with trailing whitespace normalized per line. "
-            "Use write_file for changes touching more than ~20 lines."
+            "Broadcasts a before/after diff to the display for review. Use write_file for "
+            "changes touching more than ~20 lines."
         ),
         "input_schema": {
             "type": "object",
@@ -138,8 +182,12 @@ TOOL_DEFINITIONS = [
     {
         "name": "bash_command",
         "description": (
-            "Run a shell command. Use for building, testing, installing packages, "
-            "git operations, etc. Output is capped at 10,000 chars."
+            "Run a shell command in the shared interactive terminal. The user watches it "
+            "live in a terminal window that opens on their screen automatically, so pick "
+            "flags that show progress (e.g. curl --progress-bar) for anything slow. Use for building, testing, installing packages, "
+            "git operations, and other shell-shaped work. For ordinary file reading or "
+            "searching, prefer read_file, list_directory, search_code, and find_files "
+            "instead — they're smoother and more direct than shelling out for the same thing."
         ),
         "input_schema": {
             "type": "object",
@@ -236,16 +284,35 @@ TOOL_DEFINITIONS = [
     {
         "name": "update_memory",
         "description": (
-            "Update your persistent memory file. Use this to remember important facts about "
-            "the user, their projects, preferences, or anything worth recalling in future "
-            "sessions. The entire file is replaced, so always include everything you want to keep."
+            "Save or update one persistent memory note — a fact about the user, a project "
+            "decision, feedback on how to work, or a pointer to something external. Memory "
+            "is a directory of small typed notes (an Obsidian vault), not one big file: this "
+            "replaces only the one note named, leaving every other note untouched. Reuse an "
+            "existing name from your memory index to update that note, or invent a new short "
+            "lowercase-kebab-case name to create one. Include everything you want that note "
+            "to keep — the whole note is replaced, but only that note. Note bodies may use "
+            "[[note-name]] to link to other notes."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "The full new content of the memory file."},
+                "name": {"type": "string", "description": "Lowercase-kebab-case note name, e.g. 'about-the-user' or 'clio-display-status'."},
+                "type": {"type": "string", "description": "One of: user, feedback, project, reference."},
+                "description": {"type": "string", "description": "One-line summary shown in the memory index."},
+                "content": {"type": "string", "description": "The full body of the note, in markdown."},
             },
-            "required": ["content"],
+            "required": ["name", "type", "description", "content"],
+        },
+    },
+    {
+        "name": "delete_memory",
+        "description": "Delete one memory note by name — use when a note is stale, wrong, or no longer relevant.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The note name to delete."},
+            },
+            "required": ["name"],
         },
     },
     {
@@ -270,7 +337,8 @@ TOOL_DEFINITIONS = [
     {
         "name": "read_url",
         "description": (
-            "Fetch a webpage and return its readable text content. Good for documentation, "
+            "Fetch a webpage and return its readable text content, with each link's URL "
+            "shown in parentheses after its text. Good for documentation, download pages, "
             "Stack Overflow, GitHub, and most dev resources. May not work on heavy "
             "JavaScript-rendered pages."
         ),
@@ -300,14 +368,15 @@ TOOL_DEFINITIONS = [
     {
         "name": "browser_open",
         "description": (
-            "Open a new browser session. Optionally navigate to a URL on open. "
-            "Use headless=true for background tasks, headless=false to show the browser visually on the server display."
+            "Open a new browser session in a visible window on the user's screen, so they "
+            "can watch what you're doing. Optionally navigate to a URL on open. Only pass "
+            "headless=true if the user explicitly asks for the browser to stay hidden."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "url": {"type": "string", "description": "Optional URL to navigate to after opening."},
-                "headless": {"type": "boolean", "description": "Run headless (no visible window). Defaults to true."},
+                "headless": {"type": "boolean", "description": "Run headless (no visible window). Defaults to false."},
             },
             "required": [],
         },
@@ -398,6 +467,48 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "computer_screenshot",
+        "description": (
+            "Take a screenshot of the real desktop and return it as an image so you can "
+            "visually analyze what's on screen. Use only for non-browser desktop apps — "
+            "for websites, use browser_screenshot and the other browser_* tools instead, "
+            "which give more reliable structured control."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "computer_click",
+        "description": (
+            "Click at a pixel coordinate on the real desktop — coordinates match a "
+            "computer_screenshot image exactly (verified 1:1, no scaling offset). Use only "
+            "for non-browser desktop apps; use browser_click for websites."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "x": {"type": "integer", "description": "X pixel coordinate, from a computer_screenshot image."},
+                "y": {"type": "integer", "description": "Y pixel coordinate, from a computer_screenshot image."},
+                "button": {"type": "string", "description": "Which button to click: left, right, or middle. Defaults to left."},
+            },
+            "required": ["x", "y"],
+        },
+    },
+    {
+        "name": "computer_type",
+        "description": (
+            "Type text via real keyboard input into whatever's currently focused on the "
+            "real desktop. Use only for non-browser desktop apps; use browser_type for "
+            "websites. Click the target field first if it isn't already focused."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Text to type."},
+            },
+            "required": ["text"],
+        },
+    },
+    {
         "name": "close_connection",
         "description": (
             "Close the WebSocket connection to the phone client. Use this to test that "
@@ -406,7 +517,162 @@ TOOL_DEFINITIONS = [
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
+    {
+        "name": "display_get_state",
+        "description": (
+            "Get a snapshot of your document viewer: the open document's path and "
+            "block count, or that none is open. Use this before acting on the viewer, "
+            "or when the user refers to what it's showing. Errors if the viewer isn't "
+            "currently open."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "display_list_actions",
+        "description": (
+            "List every action currently invocable on the document viewer, namespaced as "
+            "\"<pane>.<action>\" (e.g. \"document.open\", \"document.select\"). Call this "
+            "to see exactly what's available before calling display_invoke_action — "
+            "don't guess an action name."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "display_invoke_action",
+        "description": (
+            "Invoke one action on the document viewer by its exact name, from "
+            "display_list_actions (e.g. \"document.open\" with args {\"path\": \"...\"}). "
+            "Invoking an action brings what it acts on into view first."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Namespaced action name, e.g. \"document.open\"."},
+                "args": {"type": "object", "description": "Arguments for the action, if it takes any."},
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "email_search",
+        "description": (
+            "Search the user's Gmail using Gmail search syntax (e.g. 'is:unread in:inbox', "
+            "'from:landlord newer_than:7d', 'subject:invoice', 'category:promotions older_than:30d'). "
+            "Returns message IDs, sender, subject, date and a snippet — use email_read for the full text."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Gmail search query."},
+                "max_results": {"type": "integer", "description": "Max messages to return (default 15, max 50)."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "email_read",
+        "description": (
+            "Read one email (message_id) or a whole conversation (thread_id) in full: headers, "
+            "labels, attachment names, and plain-text body."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message_id": {"type": "string", "description": "Message ID from email_search."},
+                "thread_id": {"type": "string", "description": "Thread ID, to read the whole conversation."},
+            },
+        },
+    },
+    {
+        "name": "email_list_labels",
+        "description": "List the user's Gmail labels (system and custom).",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "email_modify",
+        "description": (
+            "Add or remove labels on one or more emails. This is how to triage: archive = remove "
+            "'INBOX'; mark read = remove 'UNREAD'; mark unread = add 'UNREAD'; star = add 'STARRED'; "
+            "mark important = add 'IMPORTANT'. Custom labels that don't exist yet are created. "
+            "Batch related messages into one call — the user approves each call."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message_ids": {"type": "array", "items": {"type": "string"}},
+                "add_labels": {"type": "array", "items": {"type": "string"}, "description": "Label names to add."},
+                "remove_labels": {"type": "array", "items": {"type": "string"}, "description": "Label names to remove."},
+            },
+            "required": ["message_ids"],
+        },
+    },
+    {
+        "name": "email_trash",
+        "description": (
+            "Move emails to Trash (recoverable for 30 days; nothing is permanently deleted). "
+            "Prefer archiving (email_modify removing INBOX) unless the user says delete or trash."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"message_ids": {"type": "array", "items": {"type": "string"}}},
+            "required": ["message_ids"],
+        },
+    },
+    {
+        "name": "email_unsubscribe",
+        "description": (
+            "Unsubscribe from a mailing list using the email's List-Unsubscribe header (one-click "
+            "or by sending the unsubscribe email). If only a web page is offered, returns its URL."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"message_id": {"type": "string", "description": "Any message from the list."}},
+            "required": ["message_id"],
+        },
+    },
+    {
+        "name": "email_draft",
+        "description": (
+            "Save an email as a Gmail draft without sending it. For a reply, pass reply_to_message_id — "
+            "recipient, 'Re:' subject and threading are filled in automatically."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient(s), comma-separated. Optional for replies."},
+                "cc": {"type": "string"},
+                "subject": {"type": "string", "description": "Optional for replies."},
+                "body": {"type": "string", "description": "Plain-text body, signed the way the user signs."},
+                "reply_to_message_id": {"type": "string"},
+            },
+            "required": ["body"],
+        },
+    },
+    {
+        "name": "email_send",
+        "description": (
+            "Send an email from the user's Gmail. The user sees the full message on their phone and "
+            "must approve it. For a reply, pass reply_to_message_id — recipient, 'Re:' subject and "
+            "threading are filled in automatically. Write in the user's voice; never send anything "
+            "they haven't asked for."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient(s), comma-separated. Optional for replies."},
+                "cc": {"type": "string"},
+                "subject": {"type": "string", "description": "Optional for replies."},
+                "body": {"type": "string", "description": "Plain-text body."},
+                "reply_to_message_id": {"type": "string"},
+            },
+            "required": ["body"],
+        },
+    },
 ]
+
+
+# What Clio is actually offered — ALL_TOOL_DEFINITIONS with DISABLED_TOOLS filtered out.
+TOOL_DEFINITIONS = [t for t in ALL_TOOL_DEFINITIONS if t["name"] not in DISABLED_TOOLS]
 
 
 def execute_tool(name: str, inputs: dict):
@@ -423,8 +689,6 @@ def execute_tool(name: str, inputs: dict):
             return _write_file(inputs["path"], inputs["content"])
         elif name == "edit_file":
             return _edit_file(inputs["path"], inputs["old_string"], inputs["new_string"])
-        elif name == "bash_command":
-            return _bash_command(inputs["command"], inputs.get("cwd"))
         elif name == "run_background":
             return _run_background(inputs["command"], inputs.get("cwd"))
         elif name == "check_job":
@@ -436,7 +700,7 @@ def execute_tool(name: str, inputs: dict):
         elif name == "delete_file":
             return _delete_file(inputs["path"])
         elif name == "browser_open":
-            return _browser_open(inputs.get("url", ""), inputs.get("headless", True))
+            return _browser_open(inputs.get("url", ""), inputs.get("headless", False))
         elif name == "browser_navigate":
             return _browser_navigate(inputs["url"])
         elif name == "browser_click":
@@ -451,6 +715,12 @@ def execute_tool(name: str, inputs: dict):
             return _browser_get_elements()
         elif name == "browser_close":
             return _browser_close()
+        elif name == "computer_screenshot":
+            return _computer_screenshot()
+        elif name == "computer_click":
+            return _computer_click(inputs["x"], inputs["y"], inputs.get("button", "left"))
+        elif name == "computer_type":
+            return _computer_type(inputs["text"])
         elif name == "get_current_time":
             return _get_current_time()
         elif name == "web_search":
@@ -458,9 +728,27 @@ def execute_tool(name: str, inputs: dict):
         elif name == "read_url":
             return _read_url(inputs["url"])
         elif name == "update_memory":
-            return _update_memory(inputs["content"])
+            return _update_memory(inputs["name"], inputs["type"], inputs["description"], inputs["content"])
+        elif name == "delete_memory":
+            return _delete_memory(inputs["name"])
         elif name == "restart_server":
             return _restart_server(inputs["context"])
+        elif name == "email_search":
+            return gmail.search(inputs["query"], inputs.get("max_results", 15))
+        elif name == "email_read":
+            return gmail.read(inputs.get("message_id", ""), inputs.get("thread_id", ""))
+        elif name == "email_list_labels":
+            return gmail.list_labels()
+        elif name == "email_modify":
+            return gmail.modify(inputs["message_ids"], inputs.get("add_labels"), inputs.get("remove_labels"))
+        elif name == "email_trash":
+            return gmail.trash(inputs["message_ids"])
+        elif name == "email_unsubscribe":
+            return gmail.unsubscribe(inputs["message_id"])
+        elif name == "email_draft":
+            return gmail.draft(**_email_fields(inputs))
+        elif name == "email_send":
+            return gmail.send(**_email_fields(inputs))
         else:
             return f"Unknown tool: {name}"
     except Exception as e:
@@ -507,14 +795,16 @@ def describe_tool_call(name: str, inputs: dict) -> str:
     elif name == "read_url":
         return f"read {inputs['url']}"
     elif name == "update_memory":
-        return "update memory"
+        return f"update memory note '{inputs.get('name', '?')}'"
+    elif name == "delete_memory":
+        return f"delete memory note '{inputs.get('name', '?')}'"
     elif name == "restart_server":
         return "restart server"
     elif name == "update_scratchpad":
         return "update scratchpad"
     elif name == "browser_open":
         url = inputs.get("url", "")
-        mode = "headless" if inputs.get("headless", True) else "visible"
+        mode = "headless" if inputs.get("headless", False) else "visible"
         return f"open browser ({mode})" + (f" → {url}" if url else "")
     elif name == "browser_navigate":
         return f"navigate to {inputs['url']}"
@@ -530,8 +820,57 @@ def describe_tool_call(name: str, inputs: dict) -> str:
         return "get page elements"
     elif name == "browser_close":
         return "close browser"
+    elif name == "computer_screenshot":
+        return "take a screenshot of the desktop"
+    elif name == "computer_click":
+        button = inputs.get("button", "left")
+        return f"{button}-click at ({inputs['x']}, {inputs['y']})"
+    elif name == "computer_type":
+        return f"type \"{inputs['text']}\" on the desktop"
     elif name == "close_connection":
         return "close connection"
+    elif name == "display_get_state":
+        return "check the display"
+    elif name == "display_list_actions":
+        return "list display actions"
+    elif name == "display_invoke_action":
+        return f"invoke \"{inputs.get('name', '?')}\" on the display"
+    elif name == "email_search":
+        return f"search email for \"{inputs.get('query', '')}\""
+    elif name == "email_read":
+        return "read an email thread" if inputs.get("thread_id") else "read an email"
+    elif name == "email_list_labels":
+        return "list email labels"
+    elif name == "email_modify":
+        n = len(inputs.get("message_ids", []))
+        changes = []
+        add = inputs.get("add_labels") or []
+        remove = inputs.get("remove_labels") or []
+        if "INBOX" in [r.upper() for r in remove]:
+            changes.append("archive")
+        if "UNREAD" in [r.upper() for r in remove]:
+            changes.append("mark read")
+        if "UNREAD" in [a.upper() for a in add]:
+            changes.append("mark unread")
+        other_add = [a for a in add if a.upper() != "UNREAD"]
+        other_remove = [r for r in remove if r.upper() not in ("INBOX", "UNREAD")]
+        if other_add:
+            changes.append("add label " + ", ".join(other_add))
+        if other_remove:
+            changes.append("remove label " + ", ".join(other_remove))
+        return f"{' + '.join(changes) or 'relabel'} {n} email{'s' if n != 1 else ''}"
+    elif name == "email_trash":
+        n = len(inputs.get("message_ids", []))
+        return f"move {n} email{'s' if n != 1 else ''} to Trash"
+    elif name == "email_unsubscribe":
+        return "unsubscribe from this mailing list"
+    elif name in ("email_draft", "email_send"):
+        verb = "send" if name == "email_send" else "save a draft"
+        to = gmail.recipients_summary(inputs.get("to", ""), inputs.get("cc", ""))
+        target = f" to {to}" if to else (" replying to the thread" if inputs.get("reply_to_message_id") else "")
+        subject = inputs.get("subject", "")
+        head = f"{verb}{target}" + (f" — \"{subject}\"" if subject else "")
+        return f"{head}:\n\n{inputs.get('body', '')}"
     return name
 
 
@@ -567,9 +906,6 @@ def summarize_tool_result(name: str, result) -> str:
         return "File written"
     elif name == "edit_file":
         return "Edit applied"
-    elif name == "bash_command":
-        lines = result.strip().split("\n")
-        return lines[-1][:80] if lines else "Done"
     elif name == "run_background":
         return result
     elif name == "check_job":
@@ -589,7 +925,9 @@ def summarize_tool_result(name: str, result) -> str:
     elif name == "read_url":
         return f"Read {len(result)} chars"
     elif name == "update_memory":
-        return "Memory updated"
+        return result
+    elif name == "delete_memory":
+        return result
     elif name == "restart_server":
         return "Restarting..."
     elif name == "update_scratchpad":
@@ -612,13 +950,26 @@ def summarize_tool_result(name: str, result) -> str:
         return f"Found {len(lines)} elements"
     elif name == "browser_close":
         return result
+    elif name == "computer_click":
+        return result[:80]
+    elif name == "computer_type":
+        return result[:80]
     elif name == "close_connection":
         return "Connection closed"
+    elif name == "email_search":
+        return result.splitlines()[0][:80]
+    elif name == "email_read":
+        return "Read email"
+    elif name.startswith("email_"):
+        return result[:80]
     return "Done"
 
 
+def _email_fields(inputs: dict) -> dict:
+    return {k: inputs.get(k, "") for k in ("to", "cc", "subject", "body", "reply_to_message_id")}
+
+
 READ_LIMIT = 50_000
-BASH_OUTPUT_LIMIT = 10_000
 _SEARCH_IGNORE_DIRS = {".venv", "__pycache__", "node_modules", ".git", "dist", "build"}
 
 _SENSITIVE_PREFIXES = [
@@ -773,30 +1124,9 @@ def _edit_file(path: str, old_string: str, new_string: str) -> dict:
     return {"_diff": False, "text": f"Error: string not found in {path} — read the file first to get the exact text"}
 
 
-# Output is capped at BASH_OUTPUT_LIMIT (10,000 chars); anything beyond that is truncated with a note.
 def _run_background(command: str, cwd: str | None = None) -> str:
     job_id = job_manager.start(command, cwd)
     return f"Started job {job_id}. Use check_job to see output."
-
-
-def _bash_command(command: str, cwd: str | None = None) -> str:
-    work_dir = Path(cwd).expanduser() if cwd else _WORK_DIR
-    result = subprocess.run(
-        command,
-        shell=True,
-        cwd=str(work_dir),
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    output = result.stdout
-    if result.stderr:
-        output += "\n" + result.stderr
-    output = output.strip() or "(no output)"
-    if len(output) > BASH_OUTPUT_LIMIT:
-        total = len(output)
-        output = output[:BASH_OUTPUT_LIMIT] + f"\n\n[truncated — showing first {BASH_OUTPUT_LIMIT} of {total} chars]"
-    return output
 
 
 def _delete_file(path: str) -> str:
@@ -807,9 +1137,18 @@ def _delete_file(path: str) -> str:
     return f"Deleted {path}"
 
 
-def _update_memory(content: str) -> str:
-    MEMORY_PATH.write_text(content)
-    return f"Memory updated ({len(content)} bytes)"
+def _update_memory(name: str, type: str, description: str, content: str) -> str:
+    try:
+        memory_store.write_note(name, type, description, content)
+    except ValueError as e:
+        return f"Error: {e}"
+    return f"Memory note '{name}' updated ({len(content)} bytes)."
+
+
+def _delete_memory(name: str) -> str:
+    if memory_store.delete_note(name):
+        return f"Memory note '{name}' deleted."
+    return f"Error: no memory note named '{name}'."
 
 
 def _web_search(query: str) -> str:
@@ -857,6 +1196,16 @@ def _read_url(url: str) -> str:
     soup = BeautifulSoup(resp.text, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "noscript"]):
         tag.decompose()
+    # Keep each link's destination next to its text — otherwise "Download for
+    # ARM64" reaches Claude with no URL, and the only way to find it is to
+    # escalate to the browser.
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if href.startswith(("#", "javascript:", "mailto:")):
+            continue
+        absolute = urljoin(resp.url, href)
+        label = a.get_text(" ", strip=True)
+        a.replace_with(f"{label} ({absolute})" if label and label != absolute else absolute)
     text = soup.get_text(separator="\n")
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     cleaned = "\n".join(lines)

@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from .agent import AgentSession, TMP_DIR, consolidate_sessions
 from .session import VoiceSession
 from .stt import reset_last_transcript
+from .terminal_session import terminal_session
 from .tools import RESTART_CONTEXT_PATH
 from .tts import synthesize, TTS_ENGINE, MODELS_DIR, PIPER_MODEL_NAME
 
@@ -50,6 +51,65 @@ class DiffConnectionManager:
 
 
 diff_manager = DiffConnectionManager()
+
+
+class DisplayLink:
+    """Single connection to Clio's display action surface. Unlike the phone,
+    only one display runs per machine, so this holds at most one socket —
+    and does request/response correlation over it, since the display is
+    answering calls Clio's tool loop makes, not just receiving a broadcast."""
+
+    def __init__(self):
+        self._ws: WebSocket | None = None
+        self._pending: dict[str, asyncio.Future] = {}
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self._ws = websocket
+
+    def disconnect(self, websocket: WebSocket):
+        if self._ws is websocket:
+            self._ws = None
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(RuntimeError("document viewer disconnected"))
+        self._pending.clear()
+
+    @property
+    def connected(self) -> bool:
+        return self._ws is not None
+
+    async def handle_message(self, message: dict):
+        req_id = message.get("id")
+        fut = self._pending.get(req_id)
+        if not fut or fut.done():
+            return
+        if "error" in message:
+            fut.set_exception(RuntimeError(message["error"]))
+        else:
+            fut.set_result(message.get("result"))
+
+    async def call(self, method: str, args: dict | None = None, timeout: float = 10.0):
+        if not self._ws:
+            raise RuntimeError("the document viewer is not currently open")
+        req_id = uuid.uuid4().hex[:8]
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._pending[req_id] = fut
+        try:
+            await self._ws.send_json({"id": req_id, "method": method, "args": args or {}})
+            return await asyncio.wait_for(fut, timeout=timeout)
+        finally:
+            self._pending.pop(req_id, None)
+
+
+display_link = DisplayLink()
+
+# So the display (a separate process) can authenticate the local-only
+# link without scraping server.log. Regenerated every server start; not a
+# long-lived secret, so plaintext-on-disk is fine for a same-machine token.
+_SESSION_TOKEN_PATH = Path(__file__).parent / ".session_token"
+_SESSION_TOKEN_PATH.write_text(SESSION_TOKEN)
 
 # Set root logger to WARNING — silences all third-party noise (httpx, httpcore, anthropic, faster_whisper, etc.)
 logging.getLogger().setLevel(logging.WARNING)
@@ -115,8 +175,9 @@ CLIO_DIR = Path(__file__).parent.parent
 FIRST_RUN_FLAG = CLIO_DIR / ".first_run_complete"
 
 INTRO_TEXT = (
-    "Hi, I'm Clio — a voice-controlled coding assistant that lives in your development environment. "
-    "I can read and write code, run commands, search the web, and help you build things. "
+    "Hi, I'm Clio. I talk with you by voice, and you can watch what I do on your screen as I work. "
+    "I can read and write code, run commands, search the web, open documents for us to look at "
+    "together, and help you think things through. "
     "Just press the button and tell me what you need. "
     "You can give me multi-step instructions, ask follow-up questions, or just think out loud — I'll keep up."
 )
@@ -163,6 +224,45 @@ async def diff_websocket_endpoint(websocket: WebSocket):
         pass
     finally:
         diff_manager.disconnect(websocket)
+
+
+@app.websocket("/ws/display")
+async def display_websocket_endpoint(websocket: WebSocket):
+    token = websocket.query_params.get("token", "")
+    if token != SESSION_TOKEN:
+        await websocket.close(code=4403)
+        return
+    await display_link.connect(websocket)
+    try:
+        async for message in websocket.iter_json():
+            await display_link.handle_message(message)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        display_link.disconnect(websocket)
+
+
+@app.websocket("/ws/terminal")
+async def terminal_websocket_endpoint(websocket: WebSocket):
+    token = websocket.query_params.get("token", "")
+    if token != SESSION_TOKEN:
+        await websocket.close(code=4403)
+        return
+    await websocket.accept()
+    await terminal_session.subscribe(websocket)
+    try:
+        async for message in websocket.iter_json():
+            kind = message.get("type")
+            if kind == "input":
+                terminal_session.write_as_human(message.get("data", ""))
+            elif kind == "interrupt":
+                terminal_session.request_interrupt()
+            elif kind == "resize":
+                terminal_session.resize(message.get("cols", 80), message.get("rows", 24))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        terminal_session.unsubscribe(websocket)
 
 
 @app.get("/audio/{filename}")
@@ -220,7 +320,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     reset_last_transcript()  # clear cross-session priming so hallucinations get filtered
     voice_session = VoiceSession()
-    agent = AgentSession(websocket, voice_session, diff_manager=diff_manager)
+    agent = AgentSession(websocket, voice_session, diff_manager=diff_manager, display_link=display_link)
     processing_task: asyncio.Task | None = None
 
     # Ask the user whether to save this session to memory

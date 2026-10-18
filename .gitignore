@@ -1,14 +1,15 @@
 # Personal config — copy config.sh.example to config.sh and fill it in
 config.sh
 
-# Personal Clio files — copy *.example.md versions as starting points
-memory.md
+# Personal Clio files — copy the *.example versions as starting points
+memory/
 soul.md
 journal.md
 
 # OAuth credentials and token script — machine-specific secrets
 server/credentials.json
 server/get_token.py
+server/gmail_token.json
 
 # First-run tracking — created on first server start
 .first_run_complete
@@ -17,9 +18,13 @@ server/get_token.py
 clio.crt
 clio.key
 
+# Local display-link auth token — regenerated every server start
+server/.session_token
+
 # Log files
 server.log
 server.log.1
+display.log
 
 # Runtime directories
 .venv/
@@ -42,3 +47,13 @@ server/models/*
 *.pyc
 *.pyo
 *.pyd
+
+# display/ (Electron + Vite)
+display/node_modules/
+display/out/
+display/dist/
+display/.vite/
+
+# Runtime logs
+*.log
+start.out
