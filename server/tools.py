@@ -36,6 +36,7 @@ from .computer import (
     computer_type as _computer_type,
 )
 from . import memory_store
+from . import gmail
 
 RESTART_CONTEXT_PATH = Path(__file__).parent / "restart_context.txt"
 
@@ -50,6 +51,7 @@ AUTO_APPROVE = {
     "display_get_state", "display_list_actions", "display_invoke_action",
     "computer_screenshot",
     "delete_memory",
+    "email_search", "email_read", "email_list_labels", "email_draft",
 }
 
 # Tools withheld from Clio entirely (filtered out of TOOL_DEFINITIONS below).
@@ -551,6 +553,121 @@ ALL_TOOL_DEFINITIONS = [
             "required": ["name"],
         },
     },
+    {
+        "name": "email_search",
+        "description": (
+            "Search the user's Gmail using Gmail search syntax (e.g. 'is:unread in:inbox', "
+            "'from:landlord newer_than:7d', 'subject:invoice', 'category:promotions older_than:30d'). "
+            "Returns message IDs, sender, subject, date and a snippet — use email_read for the full text."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Gmail search query."},
+                "max_results": {"type": "integer", "description": "Max messages to return (default 15, max 50)."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "email_read",
+        "description": (
+            "Read one email (message_id) or a whole conversation (thread_id) in full: headers, "
+            "labels, attachment names, and plain-text body."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message_id": {"type": "string", "description": "Message ID from email_search."},
+                "thread_id": {"type": "string", "description": "Thread ID, to read the whole conversation."},
+            },
+        },
+    },
+    {
+        "name": "email_list_labels",
+        "description": "List the user's Gmail labels (system and custom).",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "email_modify",
+        "description": (
+            "Add or remove labels on one or more emails. This is how to triage: archive = remove "
+            "'INBOX'; mark read = remove 'UNREAD'; mark unread = add 'UNREAD'; star = add 'STARRED'; "
+            "mark important = add 'IMPORTANT'. Custom labels that don't exist yet are created. "
+            "Batch related messages into one call — the user approves each call."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message_ids": {"type": "array", "items": {"type": "string"}},
+                "add_labels": {"type": "array", "items": {"type": "string"}, "description": "Label names to add."},
+                "remove_labels": {"type": "array", "items": {"type": "string"}, "description": "Label names to remove."},
+            },
+            "required": ["message_ids"],
+        },
+    },
+    {
+        "name": "email_trash",
+        "description": (
+            "Move emails to Trash (recoverable for 30 days; nothing is permanently deleted). "
+            "Prefer archiving (email_modify removing INBOX) unless the user says delete or trash."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"message_ids": {"type": "array", "items": {"type": "string"}}},
+            "required": ["message_ids"],
+        },
+    },
+    {
+        "name": "email_unsubscribe",
+        "description": (
+            "Unsubscribe from a mailing list using the email's List-Unsubscribe header (one-click "
+            "or by sending the unsubscribe email). If only a web page is offered, returns its URL."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"message_id": {"type": "string", "description": "Any message from the list."}},
+            "required": ["message_id"],
+        },
+    },
+    {
+        "name": "email_draft",
+        "description": (
+            "Save an email as a Gmail draft without sending it. For a reply, pass reply_to_message_id — "
+            "recipient, 'Re:' subject and threading are filled in automatically."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient(s), comma-separated. Optional for replies."},
+                "cc": {"type": "string"},
+                "subject": {"type": "string", "description": "Optional for replies."},
+                "body": {"type": "string", "description": "Plain-text body, signed the way the user signs."},
+                "reply_to_message_id": {"type": "string"},
+            },
+            "required": ["body"],
+        },
+    },
+    {
+        "name": "email_send",
+        "description": (
+            "Send an email from the user's Gmail. The user sees the full message on their phone and "
+            "must approve it. For a reply, pass reply_to_message_id — recipient, 'Re:' subject and "
+            "threading are filled in automatically. Write in the user's voice; never send anything "
+            "they haven't asked for."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient(s), comma-separated. Optional for replies."},
+                "cc": {"type": "string"},
+                "subject": {"type": "string", "description": "Optional for replies."},
+                "body": {"type": "string", "description": "Plain-text body."},
+                "reply_to_message_id": {"type": "string"},
+            },
+            "required": ["body"],
+        },
+    },
 ]
 
 
@@ -616,6 +733,22 @@ def execute_tool(name: str, inputs: dict):
             return _delete_memory(inputs["name"])
         elif name == "restart_server":
             return _restart_server(inputs["context"])
+        elif name == "email_search":
+            return gmail.search(inputs["query"], inputs.get("max_results", 15))
+        elif name == "email_read":
+            return gmail.read(inputs.get("message_id", ""), inputs.get("thread_id", ""))
+        elif name == "email_list_labels":
+            return gmail.list_labels()
+        elif name == "email_modify":
+            return gmail.modify(inputs["message_ids"], inputs.get("add_labels"), inputs.get("remove_labels"))
+        elif name == "email_trash":
+            return gmail.trash(inputs["message_ids"])
+        elif name == "email_unsubscribe":
+            return gmail.unsubscribe(inputs["message_id"])
+        elif name == "email_draft":
+            return gmail.draft(**_email_fields(inputs))
+        elif name == "email_send":
+            return gmail.send(**_email_fields(inputs))
         else:
             return f"Unknown tool: {name}"
     except Exception as e:
@@ -702,6 +835,42 @@ def describe_tool_call(name: str, inputs: dict) -> str:
         return "list display actions"
     elif name == "display_invoke_action":
         return f"invoke \"{inputs.get('name', '?')}\" on the display"
+    elif name == "email_search":
+        return f"search email for \"{inputs.get('query', '')}\""
+    elif name == "email_read":
+        return "read an email thread" if inputs.get("thread_id") else "read an email"
+    elif name == "email_list_labels":
+        return "list email labels"
+    elif name == "email_modify":
+        n = len(inputs.get("message_ids", []))
+        changes = []
+        add = inputs.get("add_labels") or []
+        remove = inputs.get("remove_labels") or []
+        if "INBOX" in [r.upper() for r in remove]:
+            changes.append("archive")
+        if "UNREAD" in [r.upper() for r in remove]:
+            changes.append("mark read")
+        if "UNREAD" in [a.upper() for a in add]:
+            changes.append("mark unread")
+        other_add = [a for a in add if a.upper() != "UNREAD"]
+        other_remove = [r for r in remove if r.upper() not in ("INBOX", "UNREAD")]
+        if other_add:
+            changes.append("add label " + ", ".join(other_add))
+        if other_remove:
+            changes.append("remove label " + ", ".join(other_remove))
+        return f"{' + '.join(changes) or 'relabel'} {n} email{'s' if n != 1 else ''}"
+    elif name == "email_trash":
+        n = len(inputs.get("message_ids", []))
+        return f"move {n} email{'s' if n != 1 else ''} to Trash"
+    elif name == "email_unsubscribe":
+        return "unsubscribe from this mailing list"
+    elif name in ("email_draft", "email_send"):
+        verb = "send" if name == "email_send" else "save a draft"
+        to = gmail.recipients_summary(inputs.get("to", ""), inputs.get("cc", ""))
+        target = f" to {to}" if to else (" replying to the thread" if inputs.get("reply_to_message_id") else "")
+        subject = inputs.get("subject", "")
+        head = f"{verb}{target}" + (f" — \"{subject}\"" if subject else "")
+        return f"{head}:\n\n{inputs.get('body', '')}"
     return name
 
 
@@ -787,7 +956,17 @@ def summarize_tool_result(name: str, result) -> str:
         return result[:80]
     elif name == "close_connection":
         return "Connection closed"
+    elif name == "email_search":
+        return result.splitlines()[0][:80]
+    elif name == "email_read":
+        return "Read email"
+    elif name.startswith("email_"):
+        return result[:80]
     return "Done"
+
+
+def _email_fields(inputs: dict) -> dict:
+    return {k: inputs.get(k, "") for k in ("to", "cc", "subject", "body", "reply_to_message_id")}
 
 
 READ_LIMIT = 50_000
