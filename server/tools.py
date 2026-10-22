@@ -46,6 +46,7 @@ AUTO_APPROVE = {
     "update_memory", "update_scratchpad",
     "web_search", "get_current_time", "read_url", "close_connection",
     "check_job", "stop_job", "list_jobs",
+    "check_delegation", "stop_delegation", "list_delegations",
     "browser_get_content", "browser_get_elements", "browser_screenshot",
     "browser_navigate", "browser_open",
     "display_get_state", "display_list_actions", "display_invoke_action",
@@ -80,6 +81,14 @@ TERMINAL_SESSION_TOOLS = {"bash_command"}
 # written into its history anyway so they show up in the terminal window
 # alongside everything else Clio ran.
 TERMINAL_MIRRORED_TOOLS = {"run_background", "check_job", "stop_job", "list_jobs"}
+
+# Delegation tools spawn and track asyncio subprocesses (server/delegate.py),
+# so they must run on the event loop — handled directly in agent.py rather
+# than in execute_tool's worker thread.
+DELEGATION_TOOLS = {
+    "delegate_task", "follow_up_delegation", "check_delegation",
+    "stop_delegation", "list_delegations",
+}
 
 ALL_TOOL_DEFINITIONS = [
     {
@@ -246,6 +255,70 @@ ALL_TOOL_DEFINITIONS = [
             "properties": {},
             "required": [],
         },
+    },
+    {
+        "name": "delegate_task",
+        "description": (
+            "Hand a self-contained coding task to a separate Claude Code instance that runs "
+            "in the background. Use this for substantial multi-file work — implementing a "
+            "feature, a refactor, fixing a bug that needs investigation — rather than doing "
+            "it yourself step by step. It can read and edit files and run git status/diff/log, "
+            "tests and builds, but no other shell commands. Its activity streams into the "
+            "terminal window. Returns immediately with an ID; you'll receive a message when "
+            "it finishes, so tell the user it's started and don't poll. Write the task as a "
+            "complete brief: it can't see this conversation."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Full instructions, including goal, relevant files, and what 'done' means."},
+                "cwd": {"type": "string", "description": "Project directory to work in. Defaults to ~/claude."},
+            },
+            "required": ["task"],
+        },
+    },
+    {
+        "name": "follow_up_delegation",
+        "description": (
+            "Send a follow-up message to a finished delegation, continuing the same Claude "
+            "Code session with its full context — e.g. 'also add tests' or answering a "
+            "question it asked."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "delegation_id": {"type": "string", "description": "The ID returned by delegate_task."},
+                "message": {"type": "string", "description": "The follow-up instruction."},
+            },
+            "required": ["delegation_id", "message"],
+        },
+    },
+    {
+        "name": "check_delegation",
+        "description": "Check a delegation's status, recent activity, and final report if finished.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "delegation_id": {"type": "string", "description": "The ID returned by delegate_task."},
+            },
+            "required": ["delegation_id"],
+        },
+    },
+    {
+        "name": "stop_delegation",
+        "description": "Stop a running delegation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "delegation_id": {"type": "string", "description": "The delegation to stop."},
+            },
+            "required": ["delegation_id"],
+        },
+    },
+    {
+        "name": "list_delegations",
+        "description": "List all delegations and their status.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "delete_file",
@@ -782,6 +855,17 @@ def describe_tool_call(name: str, inputs: dict) -> str:
         return f"run in background: `{inputs['command']}`" + (f" in {cwd}" if cwd else "")
     elif name == "check_job":
         return f"check job {inputs['job_id']}"
+    elif name == "delegate_task":
+        cwd = inputs.get("cwd", "")
+        return f"delegate to Claude Code" + (f" in {cwd}" if cwd else "") + f": {inputs['task']}"
+    elif name == "follow_up_delegation":
+        return f"follow up with delegation {inputs['delegation_id']}: {inputs['message']}"
+    elif name == "check_delegation":
+        return f"check delegation {inputs['delegation_id']}"
+    elif name == "stop_delegation":
+        return f"stop delegation {inputs['delegation_id']}"
+    elif name == "list_delegations":
+        return "list delegations"
     elif name == "stop_job":
         return f"stop job {inputs['job_id']}"
     elif name == "list_jobs":
