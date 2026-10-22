@@ -9,6 +9,7 @@ import re
 import tempfile
 import time
 import uuid
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -22,6 +23,7 @@ from .stt import transcribe
 from .tts import synthesize
 from .session import VoiceSession, LOGS_DIR
 from .terminal_session import terminal_session
+from .delegate import execute_delegation_tool
 from . import memory_store
 from .tools import (
     TOOL_DEFINITIONS,
@@ -29,6 +31,7 @@ from .tools import (
     DISPLAY_TOOLS,
     TERMINAL_SESSION_TOOLS,
     TERMINAL_MIRRORED_TOOLS,
+    DELEGATION_TOOLS,
     RESTART_CONTEXT_PATH,
     execute_tool,
     describe_tool_call,
@@ -415,9 +418,19 @@ async def consolidate_sessions(current_log_path=None):
     print(f"[memory] marked {len(logs)} log(s) as consolidated")
 
 
+# Outbound messages kept for replay after a reconnect. A turn produces a few
+# dozen at most, so this comfortably covers anything sent within the resume window.
+OUTBOX_SIZE = 500
+
+
 class AgentSession:
     def __init__(self, websocket: WebSocket, voice_session: VoiceSession, diff_manager=None, display_link=None):
-        self.websocket = websocket
+        # None while the phone is disconnected; messages still land in the outbox.
+        self.websocket: Optional[WebSocket] = websocket
+        self._seq = 0
+        self._outbox: deque[dict] = deque(maxlen=OUTBOX_SIZE)
+        self._send_lock = asyncio.Lock()
+        self.last_audio_id: Optional[str] = None
         self.voice_session = voice_session
         self.diff_manager = diff_manager
         self.display_link = display_link
@@ -445,18 +458,44 @@ class AgentSession:
 
     # ── outbound helpers ──────────────────────────────────────────────────
 
-    async def _send(self, payload: dict):
-        await self.websocket.send_json(payload)
+    async def send(self, payload: dict):
+        """Number the message, keep it for replay, and deliver it if the phone is
+        connected. A failed send is fine: the phone reports the last seq it got
+        when it reconnects and attach() replays the rest."""
+        async with self._send_lock:
+            self._seq += 1
+            message = {**payload, "seq": self._seq}
+            self._outbox.append(message)
+            if self.websocket is None:
+                return
+            try:
+                await self.websocket.send_json(message)
+            except Exception:
+                pass
+
+    async def attach(self, websocket: WebSocket, last_seq: int):
+        """Point the session at a new connection and replay what the phone missed."""
+        async with self._send_lock:
+            self.websocket = websocket
+            missed = [m for m in self._outbox if m["seq"] > last_seq]
+            if missed:
+                print(f"[ws] replaying {len(missed)} message(s) after seq {last_seq}")
+            for message in missed:
+                await websocket.send_json(message)
+
+    def detach(self, websocket: WebSocket):
+        if self.websocket is websocket:
+            self.websocket = None
 
     async def _status(self, state: str, label: str = ""):
         payload = {"type": "status", "state": state}
         if label:
             payload["label"] = label
-        await self._send(payload)
+        await self.send(payload)
 
     async def _send_cost_update(self):
         try:
-            await self._send({"type": "cost_update", "session_usd": self.cost.total_usd})
+            await self.send({"type": "cost_update", "session_usd": self.cost.total_usd})
         except Exception:
             pass
 
@@ -471,7 +510,7 @@ class AgentSession:
         self._pending_permission = loop.create_future()
         self._pending_tool_id = tool_call_id
 
-        await self._send({
+        await self.send({
             "type": "permission_request",
             "tool_call_id": tool_call_id,
             "tool": tool,
@@ -526,10 +565,10 @@ class AgentSession:
             transcript = await asyncio.to_thread(self._transcribe, audio_bytes)
             print(f"[agent] transcript: {repr(transcript)}")
             if not transcript:
-                await self._send({"type": "turn_end"})
+                await self.send({"type": "turn_end"})
                 return
 
-            await self._send({"type": "user_transcript", "text": transcript})
+            await self.send({"type": "user_transcript", "text": transcript})
 
             # 2. Streaming agent loop — sends audio_chunk messages as sentences arrive
             await self._status("thinking", "Thinking…")
@@ -543,7 +582,7 @@ class AgentSession:
             # 3. Log + signal end of turn so phone re-enables mic
             if self.memory_enabled:
                 self.voice_session.add_exchange(transcript, response_text)
-            await self._send({"type": "turn_end"})
+            await self.send({"type": "turn_end"})
 
             # 4. Compress conversation history if token count is approaching the limit
             await self._maybe_summarize_conversation(client)
@@ -560,7 +599,36 @@ class AgentSession:
 
         except Exception as e:
             print(f"[agent] ERROR: {e!r}")
-            await self._send({"type": "error", "message": str(e)})
+            await self.send({"type": "error", "message": str(e)})
+
+    async def process_event(self, text: str):
+        """Proactive turn triggered by something other than the user speaking —
+        currently a delegated task finishing. The event goes into the
+        conversation as a bracketed system notice so Clio can tell it apart
+        from speech, then Clio responds aloud like any other turn."""
+        client = anthropic.AsyncAnthropic(timeout=CLAUDE_TIMEOUT)
+        checkpoint = len(self.conversation)
+
+        try:
+            await self._status("thinking", "Thinking…")
+            self.conversation.append({
+                "role": "user",
+                "content": f"[System notice, not spoken by the user]\n{text}",
+            })
+            print(f"[agent] proactive turn: {text.splitlines()[0]}")
+            response_text = await self._stream_agent_loop(client)
+            if response_text:
+                self.last_assistant_text = response_text
+            await self.send({"type": "turn_end"})
+            await self._maybe_summarize_conversation(client)
+
+        except asyncio.CancelledError:
+            del self.conversation[checkpoint:]
+            raise
+
+        except Exception as e:
+            print(f"[agent] ERROR: {e!r}")
+            await self.send({"type": "error", "message": str(e)})
 
     # ── memory extraction ─────────────────────────────────────────────────
 
@@ -678,7 +746,7 @@ class AgentSession:
             self._tokens_at_last_summarization = self.cost.total_input_tokens
 
             # Notify the phone UI so the user can see compression happened
-            await self._send({
+            await self.send({
                 "type": "tool_result",
                 "tool": "summarize_conversation",
                 "summary": f"Compressed {len(older)} older messages into a summary block",
@@ -716,43 +784,48 @@ class AgentSession:
 
             worker = asyncio.create_task(synthesis_worker())
 
-            async with client.messages.stream(
-                model=self.model,
-                max_tokens=8192,
-                system=[
-                    {
-                        "type": "text",
-                        "text": build_stable_prompt(),
-                        "cache_control": {"type": "ephemeral"},
-                    },
-                    {
-                        "type": "text",
-                        "text": build_volatile_prompt(self.scratchpad),
-                    },
-                ],
-                tools=TOOL_DEFINITIONS,
-                messages=self.conversation,
-            ) as stream:
-                async for text in stream.text_stream:
-                    text_buffer += text
-                    turn_text += text
+            try:
+                async with client.messages.stream(
+                    model=self.model,
+                    max_tokens=8192,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": build_stable_prompt(),
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                        {
+                            "type": "text",
+                            "text": build_volatile_prompt(self.scratchpad),
+                        },
+                    ],
+                    tools=TOOL_DEFINITIONS,
+                    messages=self.conversation,
+                ) as stream:
+                    async for text in stream.text_stream:
+                        text_buffer += text
+                        turn_text += text
 
-                    sentences, text_buffer = _extract_sentences(text_buffer)
-                    for sentence in sentences:
-                        if sentence:
-                            await sentence_queue.put(sentence)
+                        sentences, text_buffer = _extract_sentences(text_buffer)
+                        for sentence in sentences:
+                            if sentence:
+                                await sentence_queue.put(sentence)
 
-                # Flush any trailing text that didn't end with sentence punctuation
-                remainder = text_buffer.strip()
-                if remainder:
-                    await sentence_queue.put(remainder)
+                    # Flush any trailing text that didn't end with sentence punctuation
+                    remainder = text_buffer.strip()
+                    if remainder:
+                        await sentence_queue.put(remainder)
 
-                await sentence_queue.put(None)  # signal worker to stop
-                await worker                    # wait for all synthesis to finish
+                    await sentence_queue.put(None)  # signal worker to stop
+                    await worker                    # wait for all synthesis to finish
 
-                response = await stream.get_final_message()
-                self.cost.record("turn", response.usage, self.model)
-                await self._send_cost_update()
+                    response = await stream.get_final_message()
+                    self.cost.record("turn", response.usage, self.model)
+                    await self._send_cost_update()
+            finally:
+                # A cancelled turn would otherwise leave the worker pending forever
+                if not worker.done():
+                    worker.cancel()
 
             full_text += turn_text
 
@@ -765,7 +838,7 @@ class AgentSession:
                 break
 
             if response.stop_reason == "tool_use":
-                await self._send({"type": "close_bubble"})
+                await self.send({"type": "close_bubble"})
                 tool_results = await self._handle_tool_calls(response.content, client)
                 self.conversation.append({
                     "role": "user",
@@ -844,14 +917,14 @@ class AgentSession:
             self.cost.record("turn", response.usage, self.model)
             await self._send_cost_update()
 
-        await self._send({"type": "turn_end"})
+        await self.send({"type": "turn_end"})
         return full_text
 
     async def _send_audio_chunk(self, text: str):
         """Synthesize one sentence and push it to the phone immediately."""
         wav_path = await asyncio.to_thread(self._synthesize, text)
         print(f"[agent] chunk: {wav_path.name} — {repr(text[:60])}")
-        await self._send({
+        await self.send({
             "type": "audio_chunk",
             "text": text,
             "audio_url": f"/audio/{wav_path.name}",
@@ -871,12 +944,13 @@ class AgentSession:
 
             # close_connection — drop the WebSocket so the client reconnects
             if block.name == "close_connection":
-                await self._send({
+                await self.send({
                     "type": "tool_result",
                     "tool": block.name,
                     "summary": "Connection closed",
                 })
-                await self.websocket.close()
+                if self.websocket is not None:
+                    await self.websocket.close()
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
@@ -887,7 +961,7 @@ class AgentSession:
             # Scratchpad is session state — handle here rather than in execute_tool
             if block.name == "update_scratchpad":
                 self.scratchpad = block.input.get("content", "")
-                await self._send({
+                await self.send({
                     "type": "tool_result",
                     "tool": block.name,
                     "summary": "Scratchpad updated",
@@ -918,7 +992,7 @@ class AgentSession:
             if block.name in DISPLAY_TOOLS:
                 content, is_error = await self._call_display_tool(block.name, block.input)
                 print(f"[display] {block.name} -> {content[:200]}")
-                await self._send({
+                await self.send({
                     "type": "tool_result",
                     "tool": block.name,
                     "summary": content[:80] if is_error else description,
@@ -934,10 +1008,21 @@ class AgentSession:
                     block.input["command"], block.input.get("cwd")
                 )
                 print(f"[terminal] {block.name} -> {content[:200]}")
-                await self._send({
+                await self.send({
                     "type": "tool_result",
                     "tool": block.name,
                     "summary": description,
+                })
+                tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": content})
+                continue
+
+            if block.name in DELEGATION_TOOLS:
+                content = execute_delegation_tool(block.name, block.input)
+                print(f"[delegate] {block.name} -> {content[:200]}")
+                await self.send({
+                    "type": "tool_result",
+                    "tool": block.name,
+                    "summary": content.splitlines()[0][:80],
                 })
                 tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": content})
                 continue
@@ -962,7 +1047,7 @@ class AgentSession:
                     await _compress_note(client, note_name, self.cost)
                     await self._send_cost_update()
 
-            await self._send({
+            await self.send({
                 "type": "tool_result",
                 "tool": block.name,
                 "summary": summarize_tool_result(block.name, result),

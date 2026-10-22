@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .agent import AgentSession, TMP_DIR, consolidate_sessions
+from .delegate import delegation_manager
 from .session import VoiceSession
 from .stt import reset_last_transcript
 from .terminal_session import terminal_session
@@ -24,6 +25,21 @@ from .tools import RESTART_CONTEXT_PATH
 from .tts import synthesize, TTS_ENGINE, MODELS_DIR, PIPER_MODEL_NAME
 
 SESSION_TOKEN = secrets.token_hex(16)
+
+# How long Clio must have been quiet before it speaks up unprompted about a
+# finished delegation — keeps it from talking over the start of a reply.
+PROACTIVE_IDLE_SECONDS = 3.0
+
+# How long a conversation survives after its phone connection drops. A
+# reconnect within this window (same page load, so same client session id)
+# reattaches to it with history intact; after that it's finalized as before.
+RESUME_WINDOW_SECONDS = 300
+
+# Live and recently dropped phone conversations, keyed by the client
+# session id the phone generates once per page load. Each entry holds the
+# AgentSession, its VoiceSession, the WebSocket currently attached (None
+# while parked), and the expiry task that finalizes it if nobody returns.
+_phone_sessions: dict[str, dict] = {}
 
 
 class DiffConnectionManager:
@@ -276,23 +292,23 @@ async def serve_audio(filename: str):
     return FileResponse(str(audio_path), media_type="audio/wav")
 
 
-async def _send_static_greeting(websocket: WebSocket, text: str):
+async def _send_static_greeting(agent: AgentSession, text: str):
     wav_path = TMP_DIR / f"greeting_{uuid.uuid4().hex[:8]}.wav"
     await asyncio.to_thread(synthesize, text, str(wav_path))
-    await websocket.send_json({
+    await agent.send({
         "type": "audio_chunk",
         "text": text,
         "audio_url": f"/audio/{wav_path.name}",
     })
-    await websocket.send_json({"type": "turn_end"})
+    await agent.send({"type": "turn_end"})
 
 
-async def _send_greeting(websocket: WebSocket, agent: AgentSession):
+async def _send_greeting(agent: AgentSession):
     """Speak the intro (first run), a context-aware resumption (restart with
     context available), or a short generic greeting (returning, no context)."""
     is_first_run = not FIRST_RUN_FLAG.exists()
     if is_first_run:
-        await _send_static_greeting(websocket, INTRO_TEXT)
+        await _send_static_greeting(agent, INTRO_TEXT)
         FIRST_RUN_FLAG.touch()
         return
 
@@ -307,7 +323,37 @@ async def _send_greeting(websocket: WebSocket, agent: AgentSession):
             print(f"[greeting] ERROR generating restart greeting: {e!r}")
             # Fall through to the generic greeting below
 
-    await _send_static_greeting(websocket, GREETING_TEXT)
+    await _send_static_greeting(agent, GREETING_TEXT)
+
+
+def _finalize_phone_session(entry: dict):
+    agent: AgentSession = entry["agent"]
+    voice_session: VoiceSession = entry["voice_session"]
+    if entry["task"] and not entry["task"].done():
+        entry["task"].cancel()
+    agent.log_cost()
+    voice_session.end()
+    # If memory is disabled, delete the session log so nothing is consolidated later
+    if not agent.memory_enabled:
+        voice_session.log_path.unlink(missing_ok=True)
+
+
+async def _expire_phone_session(sid: str):
+    try:
+        await asyncio.sleep(RESUME_WINDOW_SECONDS)
+        print(f"[ws] session {sid} not resumed within {RESUME_WINDOW_SECONDS}s, ending it")
+    except asyncio.CancelledError:
+        # A reconnect cancels this after reclaiming the entry (it's still
+        # attached, so leave it). Server shutdown also cancels it — then the
+        # session is still parked and must be finalized so a memory-disabled
+        # session's log doesn't survive the shutdown.
+        entry = _phone_sessions.get(sid)
+        if entry is None or entry["ws"] is not None:
+            raise
+        print(f"[ws] server shutting down, ending parked session {sid}")
+    entry = _phone_sessions.pop(sid, None)
+    if entry:
+        _finalize_phone_session(entry)
 
 
 @app.websocket("/ws")
@@ -318,29 +364,116 @@ async def websocket_endpoint(websocket: WebSocket):
         return
 
     await websocket.accept()
-    reset_last_transcript()  # clear cross-session priming so hallucinations get filtered
-    voice_session = VoiceSession()
-    agent = AgentSession(websocket, voice_session, diff_manager=diff_manager, display_link=display_link)
-    processing_task: asyncio.Task | None = None
+    sid = websocket.query_params.get("sid", "") or uuid.uuid4().hex
+    try:
+        last_seq = int(websocket.query_params.get("last_seq", "0"))
+    except ValueError:
+        last_seq = 0
+    client = websocket.client
+    print(f"[ws] connect sid={sid} from {client.host if client else '?'} "
+          f"ua={websocket.headers.get('user-agent', '')!r}")
+    entry = _phone_sessions.get(sid)
+    resumed = entry is not None
 
-    # Ask the user whether to save this session to memory
-    await websocket.send_json({"type": "memory_prompt"})
+    if resumed:
+        if entry["expiry"]:
+            entry["expiry"].cancel()
+            entry["expiry"] = None
+        stale_ws = entry["ws"]
+        entry["ws"] = websocket
+        agent: AgentSession = entry["agent"]
+        voice_session: VoiceSession = entry["voice_session"]
+        # The server may not have noticed the old socket died yet (half-open
+        # TCP after a network blip) — this connection takes over regardless.
+        if stale_ws is not None:
+            print(f"[ws] session {sid} taken over by a new connection")
+            try:
+                await stale_ws.close(code=4000)
+            except Exception:
+                pass
+        print(f"[ws] session {sid} resumed ({len(agent.conversation)} messages of history)")
+        # Unnumbered, so the phone knows its seq counter is still valid before replay.
+        # If this socket dies mid-replay, the receive loop below notices and parks.
+        try:
+            await websocket.send_json({"type": "hello", "resumed": True})
+            await agent.attach(websocket, last_seq)
+        except Exception as e:
+            print(f"[ws] session {sid} replay failed: {e!r}")
+    else:
+        reset_last_transcript()  # clear cross-session priming so hallucinations get filtered
+        voice_session = VoiceSession()
+        agent = AgentSession(websocket, voice_session, diff_manager=diff_manager, display_link=display_link)
+        # "task" is the in-flight turn. It belongs to the session, not the
+        # connection, so a dropped socket doesn't kill it — the phone gets
+        # whatever it missed replayed when it reconnects.
+        entry = _phone_sessions[sid] = {
+            "agent": agent, "voice_session": voice_session, "ws": websocket,
+            "expiry": None, "task": None,
+        }
+        print(f"[ws] session {sid} started")
+        try:
+            await websocket.send_json({"type": "hello", "resumed": False})
+        except Exception:
+            pass
 
-    # Send intro (first run), context-aware resumption (restart), or short greeting (returning)
-    asyncio.create_task(_send_greeting(websocket, agent))
+        # Ask the user whether to save this session to memory
+        await agent.send({"type": "memory_prompt"})
+
+        # Send intro (first run), context-aware resumption (restart), or short greeting (returning)
+        asyncio.create_task(_send_greeting(agent))
+
+    def turn_running() -> bool:
+        return entry["task"] is not None and not entry["task"].done()
+
+    async def deliver_completions():
+        """Turn finished delegations into proactive turns, one at a time, only
+        once Clio is idle. If the user starts talking mid-announcement, the
+        turn is cancelled like any other and the notice is retried later."""
+        while True:
+            notice = await delegation_manager.completions.get()
+            started = False
+            try:
+                while True:
+                    while turn_running():
+                        await asyncio.wait({entry["task"]})
+                    await asyncio.sleep(PROACTIVE_IDLE_SECONDS)
+                    if turn_running():
+                        continue
+                    task = entry["task"] = asyncio.create_task(agent.process_event(notice))
+                    started = True
+                    await asyncio.wait({task})
+                    if not task.cancelled():
+                        break
+                    started = False
+            except asyncio.CancelledError:
+                # Once started, the turn outlives this connection and is replayed
+                if not started:
+                    delegation_manager.completions.put_nowait(notice)
+                raise
+
+    completions_task = asyncio.create_task(deliver_completions())
 
     try:
-        async for message in websocket.iter_json():
+        # receive_json rather than iter_json: iter_json swallows the
+        # disconnect, and its close code is exactly what we want to log.
+        while True:
+            message = await websocket.receive_json()
             msg_type = message.get("type")
 
             if msg_type == "audio":
+                # The phone resends an utterance it never got an ack for; if the
+                # first copy did arrive, just ack again rather than re-running it.
+                audio_id = message.get("id")
+                if audio_id and audio_id == agent.last_audio_id:
+                    await agent.send({"type": "audio_ack", "id": audio_id})
+                    continue
+                agent.last_audio_id = audio_id
+                await agent.send({"type": "audio_ack", "id": audio_id})
                 # Cancel previous exchange if still running
-                if processing_task and not processing_task.done():
-                    processing_task.cancel()
+                if turn_running():
+                    entry["task"].cancel()
                 audio_bytes = base64.b64decode(message["data"])
-                processing_task = asyncio.create_task(
-                    agent.process_audio(audio_bytes)
-                )
+                entry["task"] = asyncio.create_task(agent.process_audio(audio_bytes))
 
             elif msg_type == "permission_response":
                 tool_call_id = message.get("tool_call_id", "")
@@ -359,13 +492,20 @@ async def websocket_endpoint(websocket: WebSocket):
                 if not agent.set_model(model_id):
                     print(f"[agent] ignoring unknown model: {model_id!r}")
 
-    except WebSocketDisconnect:
-        pass
+            elif msg_type == "client_log":
+                # The phone reports why its previous connection closed — its
+                # console isn't visible from here, so this is the only record.
+                print(f"[ws] client reports: {message.get('text', '')!r}")
+
+    except WebSocketDisconnect as e:
+        print(f"[ws] session {sid} disconnected: code={e.code} reason={e.reason!r}")
+    except Exception as e:
+        print(f"[ws] session {sid} connection error: {e!r}")
     finally:
-        if processing_task and not processing_task.done():
-            processing_task.cancel()
-        agent.log_cost()
-        voice_session.end()
-        # If memory is disabled, delete the session log so nothing is consolidated later
-        if not agent.memory_enabled:
-            voice_session.log_path.unlink(missing_ok=True)
+        completions_task.cancel()
+        agent.detach(websocket)
+        # An in-flight turn keeps running; parking ends it if nobody returns.
+        if _phone_sessions.get(sid) is entry and entry["ws"] is websocket:
+            entry["ws"] = None
+            entry["expiry"] = asyncio.create_task(_expire_phone_session(sid))
+            print(f"[ws] session {sid} parked for {RESUME_WINDOW_SECONDS}s awaiting reconnect")

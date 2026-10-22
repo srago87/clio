@@ -73,12 +73,59 @@ const modelSelect      = document.getElementById("model-select");
 const costDisplay      = document.getElementById("cost-display");
 
 // ── WebSocket ─────────────────────────────────────────────────────────────
+// sessionStorage, not a plain variable: mobile browsers unload and reload
+// backgrounded tabs, and sessionStorage survives that (but not closing the
+// tab), so the server can reattach the same conversation after a reload too.
+function sessionGet(key) {
+  try { return sessionStorage.getItem(key); } catch (_) { return null; }
+}
+function sessionSet(key, value) {
+  try {
+    if (value === null) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, value);
+  } catch (_) {}
+}
+const clientSessionId = sessionGet("clio-sid") ||
+  (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
+sessionSet("clio-sid", clientSessionId);
+
+// Every server message carries a seq. On reconnect we report the last one we
+// got and the server replays the rest, so a dropped socket loses nothing.
+// Stored so a reload of the same session doesn't replay what's already played.
+let lastSeq = Number(sessionGet("clio-last-seq")) || 0;
+// The utterance most recently sent, kept until the server acks it so it can
+// be resent if the socket died underneath it.
+let unackedAudio = null;
+let reconnectAttempts = 0;
+const RECONNECT_DELAYS_MS = [0, 500, 1000, 2000, 3000];
+
+// Why the previous connection closed and how this page came to be loaded —
+// reported to the server once connected, since this console isn't visible
+// from the server log. Stored so it survives a reload.
+const navEntry = performance.getEntriesByType ? performance.getEntriesByType("navigation")[0] : null;
+let pendingClientLogs = [
+  `page loaded: navigation=${navEntry ? navEntry.type : "unknown"} ` +
+  `wasDiscarded=${document.wasDiscarded === true} visibility=${document.visibilityState}`,
+];
+const storedCloseInfo = sessionGet("clio-last-close");
+if (storedCloseInfo) pendingClientLogs.push(`before reload, ${storedCloseInfo}`);
+sessionSet("clio-last-close", null);
+document.addEventListener("visibilitychange", () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "client_log", text: `visibility=${document.visibilityState}` }));
+  }
+});
+
 function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const token = encodeURIComponent(window.CLIO_TOKEN || "");
-  ws = new WebSocket(`${proto}//${location.host}/ws?token=${token}`);
+  ws = new WebSocket(`${proto}//${location.host}/ws?token=${token}&sid=${clientSessionId}&last_seq=${lastSeq}`);
 
   ws.onopen = () => {
+    reconnectAttempts = 0;
+    for (const text of pendingClientLogs) ws.send(JSON.stringify({ type: "client_log", text }));
+    pendingClientLogs = [];
+    sessionSet("clio-last-close", null);
     if (connectingMsg.parentNode) connectingMsg.remove();
     micBtn.classList.remove("disabled");
     if (micWasSetup) {
@@ -89,26 +136,43 @@ function connect() {
     }
   };
 
-  ws.onclose = () => {
+  ws.onclose = (evt) => {
+    const closeInfo = `previous connection closed: code=${evt.code} reason=${JSON.stringify(evt.reason)} ` +
+      `wasClean=${evt.wasClean} online=${navigator.onLine} visibility=${document.visibilityState}`;
+    pendingClientLogs.push(closeInfo);
+    sessionSet("clio-last-close", closeInfo);
     setStatus("idle", "Disconnected");
     micBtn.classList.add("disabled");
-    resetTurnState(); // unstick if connection drops mid-exchange
     pendingChunks = []; // discard buffered audio so we don't send stale data
-    // NOTE: we intentionally do NOT teardown the audio pipeline here.
-    // The mic/AudioContext/MediaRecorder stay alive through reconnects.
-    setTimeout(connect, 3000);
+    // Turn state and the audio pipeline are kept: the server keeps working on
+    // the turn and replays what we missed. The "hello" on reconnect resets
+    // things only if the server no longer has our session.
+    const delay = RECONNECT_DELAYS_MS[Math.min(reconnectAttempts, RECONNECT_DELAYS_MS.length - 1)];
+    reconnectAttempts++;
+    setTimeout(connect, delay);
   };
 
   ws.onerror = () => ws.close();
 
   ws.onmessage = (evt) => {
     const msg = JSON.parse(evt.data);
+    if (msg.seq !== undefined) {
+      if (msg.seq <= lastSeq) return;  // already handled before the reconnect
+      lastSeq = msg.seq;
+      sessionSet("clio-last-seq", String(lastSeq));
+    }
     handleServerMessage(msg);
   };
 }
 
 function handleServerMessage(msg) {
   switch (msg.type) {
+    case "hello":
+      handleHello(msg.resumed);
+      break;
+    case "audio_ack":
+      if (unackedAudio && unackedAudio.id === msg.id) unackedAudio = null;
+      break;
     case "status":
       handleStatus(msg.state, msg.label);
       break;
@@ -141,6 +205,19 @@ function handleServerMessage(msg) {
       resetTurnState();
       break;
   }
+}
+
+function handleHello(resumed) {
+  if (!resumed) {
+    // New server-side session (first load, server restart, or resume window
+    // expired): its seq numbering starts over and any half-finished turn is gone.
+    lastSeq = 0;
+    sessionSet("clio-last-seq", "0");
+    unackedAudio = null;
+    resetTurnState();
+    return;
+  }
+  if (unackedAudio) ws.send(JSON.stringify({ type: "audio", ...unackedAudio }));
 }
 
 // ── Status ────────────────────────────────────────────────────────────────
@@ -697,10 +774,11 @@ function sendAudio() {
   const reader = new FileReader();
   reader.onload = () => {
     const base64 = reader.result.split(",")[1];
+    const id = crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2);
+    unackedAudio = { id, data: base64 };
+    // If the socket is down, the reconnect's "hello" sends it.
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "audio", data: base64 }));
-    } else {
-      resetTurnState();
+      ws.send(JSON.stringify({ type: "audio", ...unackedAudio }));
     }
   };
   reader.readAsDataURL(blob);
