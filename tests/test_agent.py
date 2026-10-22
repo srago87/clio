@@ -90,12 +90,11 @@ def test_build_stable_prompt_with_mock_soul(tmp_path, monkeypatch):
 
 
 def test_build_stable_prompt_with_mock_memory(tmp_path, monkeypatch):
-    memory_file = tmp_path / "memory.md"
-    memory_file.write_text("User prefers dark mode.")
-    import server.agent as agent_module
-    import server.tools as tools_module
-    monkeypatch.setattr(agent_module, "MEMORY_PATH", memory_file)
-    monkeypatch.setattr(tools_module, "MEMORY_PATH", memory_file)
+    import server.memory_store as memory_store_module
+    memory_dir = tmp_path / "memory"
+    monkeypatch.setattr(memory_store_module, "MEMORY_DIR", memory_dir)
+    monkeypatch.setattr(memory_store_module, "INDEX_PATH", memory_dir / "MEMORY.md")
+    memory_store_module.write_note("preferences", "user", "test note", "User prefers dark mode.")
     result = build_stable_prompt()
     assert "User prefers dark mode." in result
 
@@ -111,11 +110,10 @@ def test_build_stable_prompt_without_soul(tmp_path, monkeypatch):
 
 
 def test_build_stable_prompt_without_memory(tmp_path, monkeypatch):
-    missing = tmp_path / "no_memory.md"
-    import server.agent as agent_module
-    import server.tools as tools_module
-    monkeypatch.setattr(agent_module, "MEMORY_PATH", missing)
-    monkeypatch.setattr(tools_module, "MEMORY_PATH", missing)
+    import server.memory_store as memory_store_module
+    missing_dir = tmp_path / "no_memory"
+    monkeypatch.setattr(memory_store_module, "MEMORY_DIR", missing_dir)
+    monkeypatch.setattr(memory_store_module, "INDEX_PATH", missing_dir / "MEMORY.md")
     result = build_stable_prompt()
     assert isinstance(result, str)
     assert len(result) > 100

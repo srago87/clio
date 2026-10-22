@@ -6,11 +6,15 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 import DocumentBody from './DocumentBody'
 import { parseBlocks, matchBlocks } from './blocks'
 import { initialState, reducer } from './store'
-import { shortPath } from '../file-manager/format'
 import { useShell } from '../../shell/ShellContext'
 import type { PaneAction, PaneHandle, PaneModule } from '../../shell/types'
 
 const ID = 'document'
+
+function shortPath(full: string, home: string): string {
+  if (home && (full === home || full.startsWith(home + '/'))) return '~' + full.slice(home.length)
+  return full
+}
 
 function useDocument(): PaneHandle {
   const shell = useShell()
@@ -24,13 +28,6 @@ function useDocument(): PaneHandle {
   const load = useCallback((path: string) => {
     dispatch({ type: 'load', path })
   }, [])
-
-  // fulfil a cross-pane open request (e.g. double-clicking a .md file in the file manager)
-  useEffect(() => {
-    if (!shell.openDocumentRequest) return
-    load(shell.openDocumentRequest.path)
-    shell.clearOpenDocumentRequest()
-  }, [shell, load])
 
   // read + watch whenever the path changes
   useEffect(() => {

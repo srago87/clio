@@ -5,14 +5,22 @@
 """
 browser.py — Playwright-based browser controller for Clio.
 
-Manages a single browser session at a time. Supports headless and visible
-(headed) modes. On Linux, headed mode requires a DISPLAY environment variable
-to be set (e.g. via Xvfb or a real display).
+Manages a single browser session at a time. Visible (headed) by default so
+the user can watch what Clio is doing; headless is opt-in. On Linux, headed
+mode requires a DISPLAY environment variable to be set (e.g. via Xvfb or a
+real display).
+
+Playwright's sync API is bound to the thread that started it (greenlet), but
+the agent runs tools via asyncio.to_thread, which hands each call to whatever
+pool thread is free — so every public function here is pinned to one
+dedicated browser thread via @_on_browser_thread.
 """
 
 import base64
+import functools
 import os
 import platform
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 
@@ -20,7 +28,16 @@ from typing import Optional
 _playwright = None
 _browser = None
 _page = None
-_headless: bool = True
+_headless: bool = False
+
+_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clio-browser")
+
+
+def _on_browser_thread(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        return _executor.submit(fn, *args, **kwargs).result()
+    return wrapper
 
 
 def _require_page():
@@ -29,7 +46,8 @@ def _require_page():
     return _page
 
 
-def browser_open(url: str = "", headless: bool = True) -> str:
+@_on_browser_thread
+def browser_open(url: str = "", headless: bool = False) -> str:
     global _playwright, _browser, _page, _headless
 
     if _browser is not None:
@@ -61,12 +79,14 @@ def browser_open(url: str = "", headless: bool = True) -> str:
     return f"Browser opened {'headless' if headless else 'visible'}"
 
 
+@_on_browser_thread
 def browser_navigate(url: str) -> str:
     page = _require_page()
     page.goto(url, wait_until="domcontentloaded", timeout=30000)
     return f"Navigated to {url} — title: {page.title()}"
 
 
+@_on_browser_thread
 def browser_click(selector: str) -> str:
     page = _require_page()
 
@@ -91,6 +111,7 @@ def browser_click(selector: str) -> str:
     return f"Error: could not find element to click: {selector}"
 
 
+@_on_browser_thread
 def browser_type(selector: str, text: str) -> str:
     page = _require_page()
 
@@ -115,6 +136,7 @@ def browser_type(selector: str, text: str) -> str:
     return f"Error: could not find input field: {selector}"
 
 
+@_on_browser_thread
 def browser_screenshot() -> dict:
     """Take a screenshot. Returns a dict with base64 PNG for Claude to analyze."""
     page = _require_page()
@@ -130,6 +152,7 @@ def browser_screenshot() -> dict:
     }
 
 
+@_on_browser_thread
 def browser_get_content() -> str:
     """Return readable text content of the current page."""
     page = _require_page()
@@ -150,6 +173,7 @@ def browser_get_content() -> str:
     return f"URL: {page.url}\nTitle: {page.title()}\n\n{cleaned}"
 
 
+@_on_browser_thread
 def browser_get_elements() -> str:
     """Return interactive elements on the page: buttons, links, inputs."""
     page = _require_page()
@@ -188,6 +212,7 @@ def browser_get_elements() -> str:
     return "\n".join(lines)
 
 
+@_on_browser_thread
 def browser_close() -> str:
     global _playwright, _browser, _page
 

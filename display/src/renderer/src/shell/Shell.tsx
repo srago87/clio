@@ -11,15 +11,13 @@ import { initialShellState, shellReducer, type ShellAction, type ShellState } fr
 import type { PaneHandle } from './types'
 import { createLocalDriver } from './agent'
 import { useClioLink } from './useClioLink'
-import { fileManagerPane } from '../panes/file-manager'
 import { documentPane } from '../panes/document'
-import { terminalPane } from '../panes/terminal'
 
 /* Pane registry. Adding a pane = import its module and list it here;
  * ShellInner calls each module's use() hook in this fixed order. */
 
 export default function Shell(): React.JSX.Element {
-  const [state, dispatch] = useReducer(shellReducer, fileManagerPane.id, initialShellState)
+  const [state, dispatch] = useReducer(shellReducer, documentPane.id, initialShellState)
   const subscribers = useRef<Set<() => void>>(new Set())
 
   const pushLog = useCallback<ShellApi['pushLog']>((text, kind, paneId) => {
@@ -31,24 +29,15 @@ export default function Shell(): React.JSX.Element {
   const notifyChange = useCallback<ShellApi['notifyChange']>(() => {
     subscribers.current.forEach((cb) => cb())
   }, [])
-  const requestOpenDocument = useCallback<ShellApi['requestOpenDocument']>((path) => {
-    dispatch({ type: 'requestOpenDocument', path })
-  }, [])
-  const clearOpenDocumentRequest = useCallback<ShellApi['clearOpenDocumentRequest']>(() => {
-    dispatch({ type: 'clearOpenDocumentRequest' })
-  }, [])
 
   const api = useMemo<ShellApi>(
     () => ({
       focusedPaneId: state.focusedPaneId,
       focusPane,
       pushLog,
-      notifyChange,
-      openDocumentRequest: state.openDocumentRequest,
-      requestOpenDocument,
-      clearOpenDocumentRequest
+      notifyChange
     }),
-    [state.focusedPaneId, state.openDocumentRequest, focusPane, pushLog, notifyChange, requestOpenDocument, clearOpenDocumentRequest]
+    [state.focusedPaneId, focusPane, pushLog, notifyChange]
   )
 
   return (
@@ -66,10 +55,8 @@ function ShellInner({
   dispatch: React.Dispatch<ShellAction>
 }): React.JSX.Element {
   // Pane hooks — fixed order, one line per registered pane.
-  const fm = fileManagerPane.use()
   const doc = documentPane.use()
-  const term = terminalPane.use()
-  const handles: PaneHandle[] = [fm, doc, term]
+  const handles: PaneHandle[] = [doc]
 
   const handlesRef = useRef(handles)
   handlesRef.current = handles
@@ -96,21 +83,17 @@ function ShellInner({
   }
   useClioLink(driverRef.current)
 
-  // Esc -> overview (except in the terminal pane, where Esc means "interrupt
-  // Clio and take back control" — see panes/terminal/index.tsx. Global Esc
-  // handling would otherwise yank focus to the overview instead, on top of
-  // xterm.js's own hidden textarea already stealing the blur-only case).
+  // Esc -> overview
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if (e.key !== 'Escape') return
-      if (state.focusedPaneId === 'terminal' && !state.overviewOpen) return
       const el = e.target as HTMLElement
       if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA') el.blur()
       dispatch({ type: 'openOverview' })
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [dispatch, state.focusedPaneId, state.overviewOpen])
+  }, [dispatch])
 
   return (
     <div className="flex h-full flex-col bg-[#0f1115] text-white">

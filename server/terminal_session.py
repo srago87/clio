@@ -2,16 +2,16 @@
 # Licensed under the GNU Affero General Public License v3.0 or later.
 # See LICENSE in the project root, or <https://www.gnu.org/licenses/>.
 
-"""One real, persistent, shared shell session — the terminal pane's backend.
+"""One real, persistent, shared shell session, shown in a native terminal window.
 
 Both Clio (via bash_command) and the human (typing directly into the terminal
-pane) drive the *same* PTY, one at a time. There's exactly one reader of the
+window, server/terminal_viewer.py) drive the *same* PTY, one at a time. There's exactly one reader of the
 PTY's master fd (registered with the event loop), which feeds three things on
 every chunk of output: the scrollback buffer (for replaying history to a
-newly (re)connected display), every currently-connected WebSocket (live,
+newly (re)connected window), every currently-connected WebSocket (live,
 always, regardless of whose turn it is), and — if one is armed — the sentinel
-watch a pending bash_command call is waiting on. See the "Terminal pane v2"
-plan for the full design and why this isn't built on pexpect.
+watch a pending bash_command call is waiting on. Not built on pexpect — plain
+pty.fork keeps it stdlib-only.
 """
 
 import asyncio
@@ -19,9 +19,13 @@ import fcntl
 import os
 import pty
 import re
+import shutil
 import signal
 import struct
+import subprocess
+import sys
 import termios
+import time
 import uuid
 from pathlib import Path
 
@@ -30,6 +34,16 @@ _WORK_DIR = Path(__file__).parent.parent.parent
 SCROLLBACK_LIMIT = 200_000  # chars kept for replay to a newly connected client
 COMMAND_OUTPUT_LIMIT = 10_000  # chars returned to Claude per bash_command call
 COMMAND_TIMEOUT = 120  # seconds before a command is treated as hung, not interrupted
+WINDOW_CONNECT_WAIT = 4  # seconds bash_command waits for a freshly launched window to attach
+WINDOW_RELAUNCH_COOLDOWN = 30  # don't relaunch a window that never attached more often than this
+
+# Native terminal emulators that can host server/terminal_viewer.py, in
+# preference order, with the argv prefix each needs before the command.
+_TERMINAL_EMULATORS = [
+    ("ptyxis", ["--new-window", "--"]),
+    ("gnome-terminal", ["--"]),
+    ("x-terminal-emulator", ["-e"]),
+]
 
 
 class TerminalSession:
@@ -39,6 +53,8 @@ class TerminalSession:
         self.owner = "human"  # "human" | "clio" — who may currently type
         self._scrollback = ""
         self._clients: set = set()
+        self._window_attached = asyncio.Event()
+        self._last_window_launch = 0.0
         self._pending: dict | None = None  # {"pattern", "future", "buffer"} while a bash_command call is in flight
         self._interrupt_event = asyncio.Event()
         self._start_lock = asyncio.Lock()
@@ -124,6 +140,7 @@ class TerminalSession:
     async def subscribe(self, websocket):
         await self.ensure_started()
         self._clients.add(websocket)
+        self._window_attached.set()
         if self._scrollback:
             await websocket.send_json({"type": "output", "data": self._scrollback})
         await websocket.send_json({"type": "owner", "owner": self.owner})
@@ -151,8 +168,8 @@ class TerminalSession:
         like run_background/check_job/stop_job/list_jobs results, which don't
         run in the shared shell but should still show up in the same terminal
         history. Routing these through here (instead of a separate client-side
-        mechanism) means they persist and replay correctly even if the
-        terminal pane isn't the one currently focused when they happen."""
+        mechanism) means they persist and replay correctly even if no
+        terminal window is open when they happen."""
         formatted = f"\r\n{text}\r\n"
         self._scrollback = (self._scrollback + formatted)[-SCROLLBACK_LIMIT:]
         await self._broadcast({"type": "output", "data": formatted})
@@ -178,11 +195,46 @@ class TerminalSession:
     def request_interrupt(self):
         self._interrupt_event.set()
 
+    # ── native terminal window ──────────────────────────────────────────
+
+    async def ensure_window(self) -> None:
+        """Open a native terminal window onto this session if none is attached,
+        so the user can watch Clio's commands run live. Best-effort: no GUI
+        session or no known terminal emulator means Clio just runs unwatched."""
+        if self._clients:
+            return
+        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            return
+        if time.monotonic() - self._last_window_launch < WINDOW_RELAUNCH_COOLDOWN:
+            return
+        for name, prefix in _TERMINAL_EMULATORS:
+            exe = shutil.which(name)
+            if exe:
+                break
+        else:
+            return
+        self._last_window_launch = time.monotonic()
+        self._window_attached.clear()
+        subprocess.Popen(
+            [exe, *prefix, sys.executable, str(Path(__file__).parent / "terminal_viewer.py")],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        # Give it a moment to attach so the user sees the command start, not
+        # just its scrollback replay — but never block a command on it.
+        try:
+            await asyncio.wait_for(self._window_attached.wait(), WINDOW_CONNECT_WAIT)
+        except asyncio.TimeoutError:
+            pass
+
     # ── Clio's side (bash_command) ──────────────────────────────────────
 
     async def run_command_as_clio(self, command: str, cwd: str | None = None) -> str:
         await self.ensure_started()
         async with self._command_lock:
+            await self.ensure_window()
             await self._set_owner("clio")
             try:
                 full_command = f"cd {_shell_quote(cwd)} && {command}" if cwd else command
@@ -269,8 +321,12 @@ def _extract_output(captured: str, start_marker: str) -> str:
     # *last* occurrence is the marker actually being printed as output.
     idx = captured.rfind(start_marker)
     after = captured[idx + len(start_marker):] if idx != -1 else captured
-    cleaned = _ANSI_RE.sub("", after).replace("\r\n", "\n").replace("\r", "")
-    return cleaned.strip("\n")
+    cleaned = _ANSI_RE.sub("", after).replace("\r\n", "\n")
+    # A bare \r means "redraw this line" (progress bars) — keep only the final
+    # frame of each line, like the terminal itself shows, instead of handing
+    # Claude every intermediate frame.
+    lines = [line.rstrip("\r").rsplit("\r", 1)[-1].rstrip() for line in cleaned.split("\n")]
+    return "\n".join(lines).strip("\n")
 
 
 terminal_session = TerminalSession()

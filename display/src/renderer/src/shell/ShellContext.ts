@@ -4,7 +4,6 @@
 
 import { createContext, useContext } from 'react'
 import type { LogKind } from './types'
-import type { OpenDocumentRequest } from './shellStore'
 
 /** The slice of the shell a pane module may touch from inside its `use()` hook. */
 export interface ShellApi {
@@ -14,11 +13,6 @@ export interface ShellApi {
   pushLog: (text: string, kind: LogKind, paneId?: string) => void
   /** bump the env-changed subscribers (call after a pane mutates state) */
   notifyChange: () => void
-  /** set by requestOpenDocument, consumed once by the document pane */
-  openDocumentRequest: OpenDocumentRequest | null
-  /** hand a path to the document pane and focus it — how the file manager opens a .md file */
-  requestOpenDocument: (path: string) => void
-  clearOpenDocumentRequest: () => void
 }
 
 export const ShellContext = createContext<ShellApi | null>(null)

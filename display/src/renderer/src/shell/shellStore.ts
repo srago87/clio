@@ -4,25 +4,17 @@
 
 import type { LogEntry, LogKind } from './types'
 
-export interface OpenDocumentRequest {
-  path: string
-  /** bumped on every request so re-opening the same path still re-triggers. */
-  nonce: number
-}
-
 export interface ShellState {
   focusedPaneId: string
   overviewOpen: boolean
   log: LogEntry[]
-  openDocumentRequest: OpenDocumentRequest | null
 }
 
 export function initialShellState(firstPaneId: string): ShellState {
   return {
     focusedPaneId: firstPaneId,
-    overviewOpen: true,
-    log: [],
-    openDocumentRequest: null
+    overviewOpen: false,
+    log: []
   }
 }
 
@@ -37,8 +29,6 @@ export type ShellAction =
   | { type: 'closeOverview' }
   | { type: 'toggleOverview' }
   | { type: 'log'; text: string; kind: LogKind; paneId?: string }
-  | { type: 'requestOpenDocument'; path: string }
-  | { type: 'clearOpenDocumentRequest' }
 
 export function shellReducer(state: ShellState, action: ShellAction): ShellState {
   switch (action.type) {
@@ -52,15 +42,6 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
       return { ...state, overviewOpen: !state.overviewOpen }
     case 'log':
       return { ...state, log: append(state.log, action.text, action.kind, action.paneId) }
-    case 'requestOpenDocument':
-      return {
-        ...state,
-        focusedPaneId: 'document',
-        overviewOpen: false,
-        openDocumentRequest: { path: action.path, nonce: (state.openDocumentRequest?.nonce ?? 0) + 1 }
-      }
-    case 'clearOpenDocumentRequest':
-      return { ...state, openDocumentRequest: null }
     default:
       return state
   }

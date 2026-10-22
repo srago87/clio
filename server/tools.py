@@ -10,6 +10,7 @@ import threading
 import time
 import urllib.parse
 import requests
+from urllib.parse import urljoin
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -30,8 +31,14 @@ from .browser import (
     browser_get_elements as _browser_get_elements,
     browser_close as _browser_close,
 )
+from .computer import (
+    computer_screenshot as _computer_screenshot,
+    computer_click as _computer_click,
+    computer_type as _computer_type,
+)
+from . import memory_store
+from . import gmail
 
-MEMORY_PATH = Path(__file__).parent.parent / "memory.md"
 RESTART_CONTEXT_PATH = Path(__file__).parent / "restart_context.txt"
 
 # Tools that execute without asking the user
@@ -40,9 +47,13 @@ AUTO_APPROVE = {
     "update_memory", "update_scratchpad",
     "web_search", "get_current_time", "read_url", "close_connection",
     "check_job", "stop_job", "list_jobs",
+    "check_delegation", "stop_delegation", "list_delegations",
     "browser_get_content", "browser_get_elements", "browser_screenshot",
     "browser_navigate", "browser_open",
     "display_get_state", "display_list_actions", "display_invoke_action",
+    "computer_screenshot",
+    "delete_memory",
+    "email_search", "email_read", "email_list_labels", "email_draft",
 }
 
 # Tools withheld from Clio entirely (filtered out of TOOL_DEFINITIONS below).
@@ -50,7 +61,7 @@ AUTO_APPROVE = {
 # delete_file were briefly retired in favor of routing everything through
 # bash_command and the terminal pane (2026-09-08) — reverted 2026-09-22 after
 # testing showed terminal-only file navigation was noticeably less smooth
-# than the dedicated tools. The terminal pane stays as one tool among many,
+# than the dedicated tools. The shared terminal stays as one tool among many,
 # not the sole file-access path; see the project-clio memory. Nothing is
 # currently disabled, but the mechanism is kept for whatever's next.
 DISABLED_TOOLS = set()
@@ -67,43 +78,17 @@ DISPLAY_TOOLS = {"display_get_state", "display_list_actions", "display_invoke_ac
 # so it's handled directly in agent.py and absent from execute_tool below.
 TERMINAL_SESSION_TOOLS = {"bash_command"}
 
-# Which pane (existing or planned) represents each tool visually, or None if a
-# pane will never make sense for it — nothing to render, no persistent object,
-# no benefit from a visual surface. Kept separate from ALL_TOOL_DEFINITIONS
-# because that list is sent to the Anthropic API verbatim as the tool schema —
-# it rejects any field it doesn't recognize, which is exactly how the "pane"
-# key ended up in here in the first place instead of inline on each tool.
-TOOL_PANES = {
-    "read_file": None,
-    "list_directory": None,
-    "search_code": None,
-    "find_files": None,
-    "write_file": "file-manager",
-    "edit_file": "file-manager",
-    "bash_command": "terminal",
-    "run_background": "terminal",
-    "check_job": "terminal",
-    "stop_job": "terminal",
-    "list_jobs": "terminal",
-    "delete_file": "file-manager",
-    "restart_server": None,
-    "update_memory": "document",
-    "get_current_time": None,
-    "web_search": "browser",
-    "read_url": "browser",
-    "update_scratchpad": "ambient",
-    "browser_open": "browser",
-    "browser_navigate": "browser",
-    "browser_click": "browser",
-    "browser_type": "browser",
-    "browser_screenshot": "browser",
-    "browser_get_content": "browser",
-    "browser_get_elements": "browser",
-    "browser_close": "browser",
-    "close_connection": None,
-    "display_get_state": None,
-    "display_list_actions": None,
-    "display_invoke_action": None,
+# Job-management tools don't run in the shared shell, but their results are
+# written into its history anyway so they show up in the terminal window
+# alongside everything else Clio ran.
+TERMINAL_MIRRORED_TOOLS = {"run_background", "check_job", "stop_job", "list_jobs"}
+
+# Delegation tools spawn and track asyncio subprocesses (server/delegate.py),
+# so they must run on the event loop — handled directly in agent.py rather
+# than in execute_tool's worker thread.
+DELEGATION_TOOLS = {
+    "delegate_task", "follow_up_delegation", "check_delegation",
+    "stop_delegation", "list_delegations",
 }
 
 ALL_TOOL_DEFINITIONS = [
@@ -171,7 +156,12 @@ ALL_TOOL_DEFINITIONS = [
     },
     {
         "name": "write_file",
-        "description": "Create or overwrite a file with the given content.",
+        "description": (
+            "Create or overwrite a file with the given content. Broadcasts a before/after "
+            "diff to the display for review. Prefer edit_file for a small, targeted change "
+            "(a few lines); use write_file when the change touches more than ~20 lines or "
+            "the file doesn't exist yet."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -186,7 +176,8 @@ ALL_TOOL_DEFINITIONS = [
         "description": (
             "Replace a specific string in a file with a new string. Tries an exact match "
             "first; if not found, retries with trailing whitespace normalized per line. "
-            "Use write_file for changes touching more than ~20 lines."
+            "Broadcasts a before/after diff to the display for review. Use write_file for "
+            "changes touching more than ~20 lines."
         ),
         "input_schema": {
             "type": "object",
@@ -201,9 +192,12 @@ ALL_TOOL_DEFINITIONS = [
     {
         "name": "bash_command",
         "description": (
-            "Run a shell command in the shared interactive terminal, visible live on the "
-            "display's terminal pane. Use for building, testing, installing packages, "
-            "git operations, etc."
+            "Run a shell command in the shared interactive terminal. The user watches it "
+            "live in a terminal window that opens on their screen automatically, so pick "
+            "flags that show progress (e.g. curl --progress-bar) for anything slow. Use for building, testing, installing packages, "
+            "git operations, and other shell-shaped work. For ordinary file reading or "
+            "searching, prefer read_file, list_directory, search_code, and find_files "
+            "instead — they're smoother and more direct than shelling out for the same thing."
         ),
         "input_schema": {
             "type": "object",
@@ -271,6 +265,70 @@ ALL_TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "delegate_task",
+        "description": (
+            "Hand a self-contained coding task to a separate Claude Code instance that runs "
+            "in the background. Use this for substantial multi-file work — implementing a "
+            "feature, a refactor, fixing a bug that needs investigation — rather than doing "
+            "it yourself step by step. It can read and edit files and run git status/diff/log, "
+            "tests and builds, but no other shell commands. Its activity streams into the "
+            "terminal window. Returns immediately with an ID; you'll receive a message when "
+            "it finishes, so tell the user it's started and don't poll. Write the task as a "
+            "complete brief: it can't see this conversation."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Full instructions, including goal, relevant files, and what 'done' means."},
+                "cwd": {"type": "string", "description": "Project directory to work in. Defaults to ~/claude."},
+            },
+            "required": ["task"],
+        },
+    },
+    {
+        "name": "follow_up_delegation",
+        "description": (
+            "Send a follow-up message to a finished delegation, continuing the same Claude "
+            "Code session with its full context — e.g. 'also add tests' or answering a "
+            "question it asked."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "delegation_id": {"type": "string", "description": "The ID returned by delegate_task."},
+                "message": {"type": "string", "description": "The follow-up instruction."},
+            },
+            "required": ["delegation_id", "message"],
+        },
+    },
+    {
+        "name": "check_delegation",
+        "description": "Check a delegation's status, recent activity, and final report if finished.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "delegation_id": {"type": "string", "description": "The ID returned by delegate_task."},
+            },
+            "required": ["delegation_id"],
+        },
+    },
+    {
+        "name": "stop_delegation",
+        "description": "Stop a running delegation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "delegation_id": {"type": "string", "description": "The delegation to stop."},
+            },
+            "required": ["delegation_id"],
+        },
+    },
+    {
+        "name": "list_delegations",
+        "description": "List all delegations and their status.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "delete_file",
         "description": "Delete a file from the filesystem.",
         "input_schema": {
@@ -307,16 +365,35 @@ ALL_TOOL_DEFINITIONS = [
     {
         "name": "update_memory",
         "description": (
-            "Update your persistent memory file. Use this to remember important facts about "
-            "the user, their projects, preferences, or anything worth recalling in future "
-            "sessions. The entire file is replaced, so always include everything you want to keep."
+            "Save or update one persistent memory note — a fact about the user, a project "
+            "decision, feedback on how to work, or a pointer to something external. Memory "
+            "is a directory of small typed notes (an Obsidian vault), not one big file: this "
+            "replaces only the one note named, leaving every other note untouched. Reuse an "
+            "existing name from your memory index to update that note, or invent a new short "
+            "lowercase-kebab-case name to create one. Include everything you want that note "
+            "to keep — the whole note is replaced, but only that note. Note bodies may use "
+            "[[note-name]] to link to other notes."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "The full new content of the memory file."},
+                "name": {"type": "string", "description": "Lowercase-kebab-case note name, e.g. 'about-the-user' or 'clio-display-status'."},
+                "type": {"type": "string", "description": "One of: user, feedback, project, reference."},
+                "description": {"type": "string", "description": "One-line summary shown in the memory index."},
+                "content": {"type": "string", "description": "The full body of the note, in markdown."},
             },
-            "required": ["content"],
+            "required": ["name", "type", "description", "content"],
+        },
+    },
+    {
+        "name": "delete_memory",
+        "description": "Delete one memory note by name — use when a note is stale, wrong, or no longer relevant.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The note name to delete."},
+            },
+            "required": ["name"],
         },
     },
     {
@@ -341,7 +418,8 @@ ALL_TOOL_DEFINITIONS = [
     {
         "name": "read_url",
         "description": (
-            "Fetch a webpage and return its readable text content. Good for documentation, "
+            "Fetch a webpage and return its readable text content, with each link's URL "
+            "shown in parentheses after its text. Good for documentation, download pages, "
             "Stack Overflow, GitHub, and most dev resources. May not work on heavy "
             "JavaScript-rendered pages."
         ),
@@ -371,14 +449,15 @@ ALL_TOOL_DEFINITIONS = [
     {
         "name": "browser_open",
         "description": (
-            "Open a new browser session. Optionally navigate to a URL on open. "
-            "Use headless=true for background tasks, headless=false to show the browser visually on the server display."
+            "Open a new browser session in a visible window on the user's screen, so they "
+            "can watch what you're doing. Optionally navigate to a URL on open. Only pass "
+            "headless=true if the user explicitly asks for the browser to stay hidden."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "url": {"type": "string", "description": "Optional URL to navigate to after opening."},
-                "headless": {"type": "boolean", "description": "Run headless (no visible window). Defaults to true."},
+                "headless": {"type": "boolean", "description": "Run headless (no visible window). Defaults to false."},
             },
             "required": [],
         },
@@ -469,6 +548,48 @@ ALL_TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "computer_screenshot",
+        "description": (
+            "Take a screenshot of the real desktop and return it as an image so you can "
+            "visually analyze what's on screen. Use only for non-browser desktop apps — "
+            "for websites, use browser_screenshot and the other browser_* tools instead, "
+            "which give more reliable structured control."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "computer_click",
+        "description": (
+            "Click at a pixel coordinate on the real desktop — coordinates match a "
+            "computer_screenshot image exactly (verified 1:1, no scaling offset). Use only "
+            "for non-browser desktop apps; use browser_click for websites."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "x": {"type": "integer", "description": "X pixel coordinate, from a computer_screenshot image."},
+                "y": {"type": "integer", "description": "Y pixel coordinate, from a computer_screenshot image."},
+                "button": {"type": "string", "description": "Which button to click: left, right, or middle. Defaults to left."},
+            },
+            "required": ["x", "y"],
+        },
+    },
+    {
+        "name": "computer_type",
+        "description": (
+            "Type text via real keyboard input into whatever's currently focused on the "
+            "real desktop. Use only for non-browser desktop apps; use browser_type for "
+            "websites. Click the target field first if it isn't already focused."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Text to type."},
+            },
+            "required": ["text"],
+        },
+    },
+    {
         "name": "close_connection",
         "description": (
             "Close the WebSocket connection to the phone client. Use this to test that "
@@ -480,51 +601,156 @@ ALL_TOOL_DEFINITIONS = [
     {
         "name": "display_get_state",
         "description": (
-            "Get a snapshot of Clio's display. The \"visible\" field is the one fact "
-            "that answers \"what is the user looking at right now\" — it's either "
-            "\"overview\" (the grid of all panes, shown by default) or the id of "
-            "one pane. A pane existing, or having been focused before, does NOT mean "
-            "it's open — only visible == that pane's id means the user is actually "
-            "looking at it. If visible is \"overview\" and the user asks about a "
-            "specific pane, it is NOT open; use display_invoke_action with "
-            "\"shell.focusPane\" to bring it into view before saying otherwise. Also "
-            "returns a one-line summary of each pane. Use this before acting on the "
-            "display, or when the user refers to something on their screen. Errors if "
-            "the display isn't currently open."
+            "Get a snapshot of your document viewer: the open document's path and "
+            "block count, or that none is open. Use this before acting on the viewer, "
+            "or when the user refers to what it's showing. Errors if the viewer isn't "
+            "currently open."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "display_list_actions",
         "description": (
-            "List every action currently invocable on the display: two shell-level "
-            "actions (\"shell.openOverview\" to show the overview, \"shell.focusPane\" to "
-            "bring one pane into view — takes a paneId argument, from display_get_state) "
-            "plus every pane's own actions, namespaced as \"<pane>.<action>\" (e.g. "
-            "\"file-manager.open\"). Call this to see exactly what's available before "
-            "calling display_invoke_action — don't guess an action name."
+            "List every action currently invocable on the document viewer, namespaced as "
+            "\"<pane>.<action>\" (e.g. \"document.open\", \"document.select\"). Call this "
+            "to see exactly what's available before calling display_invoke_action — "
+            "don't guess an action name."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "display_invoke_action",
         "description": (
-            "Invoke one action on the display by its exact name, from "
-            "display_list_actions (e.g. \"file-manager.open\", or \"shell.focusPane\" with "
-            "args {\"paneId\": \"file-manager\"}). Use this to act on whatever the display "
-            "is currently showing, or to bring a pane into view — invoking a pane's own "
-            "action automatically brings that pane into view first."
+            "Invoke one action on the document viewer by its exact name, from "
+            "display_list_actions (e.g. \"document.open\" with args {\"path\": \"...\"}). "
+            "Invoking an action brings what it acts on into view first."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Namespaced action name, e.g. \"file-manager.open\"."},
+                "name": {"type": "string", "description": "Namespaced action name, e.g. \"document.open\"."},
                 "args": {"type": "object", "description": "Arguments for the action, if it takes any."},
             },
             "required": ["name"],
         },
     },
+    {
+        "name": "email_search",
+        "description": (
+            "Search the user's Gmail using Gmail search syntax (e.g. 'is:unread in:inbox', "
+            "'from:landlord newer_than:7d', 'subject:invoice', 'category:promotions older_than:30d'). "
+            "Returns message IDs, sender, subject, date and a snippet — use email_read for the full text."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Gmail search query."},
+                "max_results": {"type": "integer", "description": "Max messages to return (default 15, max 50)."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "email_read",
+        "description": (
+            "Read one email (message_id) or a whole conversation (thread_id) in full: headers, "
+            "labels, attachment names, and plain-text body."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message_id": {"type": "string", "description": "Message ID from email_search."},
+                "thread_id": {"type": "string", "description": "Thread ID, to read the whole conversation."},
+            },
+        },
+    },
+    {
+        "name": "email_list_labels",
+        "description": "List the user's Gmail labels (system and custom).",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "email_modify",
+        "description": (
+            "Add or remove labels on one or more emails. This is how to triage: archive = remove "
+            "'INBOX'; mark read = remove 'UNREAD'; mark unread = add 'UNREAD'; star = add 'STARRED'; "
+            "mark important = add 'IMPORTANT'. Custom labels that don't exist yet are created. "
+            "Batch related messages into one call — the user approves each call."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message_ids": {"type": "array", "items": {"type": "string"}},
+                "add_labels": {"type": "array", "items": {"type": "string"}, "description": "Label names to add."},
+                "remove_labels": {"type": "array", "items": {"type": "string"}, "description": "Label names to remove."},
+            },
+            "required": ["message_ids"],
+        },
+    },
+    {
+        "name": "email_trash",
+        "description": (
+            "Move emails to Trash (recoverable for 30 days; nothing is permanently deleted). "
+            "Prefer archiving (email_modify removing INBOX) unless the user says delete or trash."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"message_ids": {"type": "array", "items": {"type": "string"}}},
+            "required": ["message_ids"],
+        },
+    },
+    {
+        "name": "email_unsubscribe",
+        "description": (
+            "Unsubscribe from a mailing list using the email's List-Unsubscribe header (one-click "
+            "or by sending the unsubscribe email). If only a web page is offered, returns its URL."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"message_id": {"type": "string", "description": "Any message from the list."}},
+            "required": ["message_id"],
+        },
+    },
+    {
+        "name": "email_draft",
+        "description": (
+            "Save an email as a Gmail draft without sending it. For a reply, pass reply_to_message_id — "
+            "recipient, 'Re:' subject and threading are filled in automatically."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient(s), comma-separated. Optional for replies."},
+                "cc": {"type": "string"},
+                "subject": {"type": "string", "description": "Optional for replies."},
+                "body": {"type": "string", "description": "Plain-text body, signed the way the user signs."},
+                "reply_to_message_id": {"type": "string"},
+            },
+            "required": ["body"],
+        },
+    },
+    {
+        "name": "email_send",
+        "description": (
+            "Send an email from the user's Gmail. The user sees the full message on their phone and "
+            "must approve it. For a reply, pass reply_to_message_id — recipient, 'Re:' subject and "
+            "threading are filled in automatically. Write in the user's voice; never send anything "
+            "they haven't asked for."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient(s), comma-separated. Optional for replies."},
+                "cc": {"type": "string"},
+                "subject": {"type": "string", "description": "Optional for replies."},
+                "body": {"type": "string", "description": "Plain-text body."},
+                "reply_to_message_id": {"type": "string"},
+            },
+            "required": ["body"],
+        },
+    },
 ]
+
 
 # What Clio is actually offered — ALL_TOOL_DEFINITIONS with DISABLED_TOOLS filtered out.
 TOOL_DEFINITIONS = [t for t in ALL_TOOL_DEFINITIONS if t["name"] not in DISABLED_TOOLS]
@@ -555,7 +781,7 @@ def execute_tool(name: str, inputs: dict):
         elif name == "delete_file":
             return _delete_file(inputs["path"])
         elif name == "browser_open":
-            return _browser_open(inputs.get("url", ""), inputs.get("headless", True))
+            return _browser_open(inputs.get("url", ""), inputs.get("headless", False))
         elif name == "browser_navigate":
             return _browser_navigate(inputs["url"])
         elif name == "browser_click":
@@ -570,6 +796,12 @@ def execute_tool(name: str, inputs: dict):
             return _browser_get_elements()
         elif name == "browser_close":
             return _browser_close()
+        elif name == "computer_screenshot":
+            return _computer_screenshot()
+        elif name == "computer_click":
+            return _computer_click(inputs["x"], inputs["y"], inputs.get("button", "left"))
+        elif name == "computer_type":
+            return _computer_type(inputs["text"])
         elif name == "get_current_time":
             return _get_current_time()
         elif name == "web_search":
@@ -577,9 +809,27 @@ def execute_tool(name: str, inputs: dict):
         elif name == "read_url":
             return _read_url(inputs["url"])
         elif name == "update_memory":
-            return _update_memory(inputs["content"])
+            return _update_memory(inputs["name"], inputs["type"], inputs["description"], inputs["content"])
+        elif name == "delete_memory":
+            return _delete_memory(inputs["name"])
         elif name == "restart_server":
             return _restart_server(inputs["context"])
+        elif name == "email_search":
+            return gmail.search(inputs["query"], inputs.get("max_results", 15))
+        elif name == "email_read":
+            return gmail.read(inputs.get("message_id", ""), inputs.get("thread_id", ""))
+        elif name == "email_list_labels":
+            return gmail.list_labels()
+        elif name == "email_modify":
+            return gmail.modify(inputs["message_ids"], inputs.get("add_labels"), inputs.get("remove_labels"))
+        elif name == "email_trash":
+            return gmail.trash(inputs["message_ids"])
+        elif name == "email_unsubscribe":
+            return gmail.unsubscribe(inputs["message_id"])
+        elif name == "email_draft":
+            return gmail.draft(**_email_fields(inputs))
+        elif name == "email_send":
+            return gmail.send(**_email_fields(inputs))
         else:
             return f"Unknown tool: {name}"
     except Exception as e:
@@ -613,6 +863,17 @@ def describe_tool_call(name: str, inputs: dict) -> str:
         return f"run in background: `{inputs['command']}`" + (f" in {cwd}" if cwd else "")
     elif name == "check_job":
         return f"check job {inputs['job_id']}"
+    elif name == "delegate_task":
+        cwd = inputs.get("cwd", "")
+        return f"delegate to Claude Code" + (f" in {cwd}" if cwd else "") + f": {inputs['task']}"
+    elif name == "follow_up_delegation":
+        return f"follow up with delegation {inputs['delegation_id']}: {inputs['message']}"
+    elif name == "check_delegation":
+        return f"check delegation {inputs['delegation_id']}"
+    elif name == "stop_delegation":
+        return f"stop delegation {inputs['delegation_id']}"
+    elif name == "list_delegations":
+        return "list delegations"
     elif name == "stop_job":
         return f"stop job {inputs['job_id']}"
     elif name == "list_jobs":
@@ -626,14 +887,16 @@ def describe_tool_call(name: str, inputs: dict) -> str:
     elif name == "read_url":
         return f"read {inputs['url']}"
     elif name == "update_memory":
-        return "update memory"
+        return f"update memory note '{inputs.get('name', '?')}'"
+    elif name == "delete_memory":
+        return f"delete memory note '{inputs.get('name', '?')}'"
     elif name == "restart_server":
         return "restart server"
     elif name == "update_scratchpad":
         return "update scratchpad"
     elif name == "browser_open":
         url = inputs.get("url", "")
-        mode = "headless" if inputs.get("headless", True) else "visible"
+        mode = "headless" if inputs.get("headless", False) else "visible"
         return f"open browser ({mode})" + (f" → {url}" if url else "")
     elif name == "browser_navigate":
         return f"navigate to {inputs['url']}"
@@ -649,6 +912,13 @@ def describe_tool_call(name: str, inputs: dict) -> str:
         return "get page elements"
     elif name == "browser_close":
         return "close browser"
+    elif name == "computer_screenshot":
+        return "take a screenshot of the desktop"
+    elif name == "computer_click":
+        button = inputs.get("button", "left")
+        return f"{button}-click at ({inputs['x']}, {inputs['y']})"
+    elif name == "computer_type":
+        return f"type \"{inputs['text']}\" on the desktop"
     elif name == "close_connection":
         return "close connection"
     elif name == "display_get_state":
@@ -657,6 +927,42 @@ def describe_tool_call(name: str, inputs: dict) -> str:
         return "list display actions"
     elif name == "display_invoke_action":
         return f"invoke \"{inputs.get('name', '?')}\" on the display"
+    elif name == "email_search":
+        return f"search email for \"{inputs.get('query', '')}\""
+    elif name == "email_read":
+        return "read an email thread" if inputs.get("thread_id") else "read an email"
+    elif name == "email_list_labels":
+        return "list email labels"
+    elif name == "email_modify":
+        n = len(inputs.get("message_ids", []))
+        changes = []
+        add = inputs.get("add_labels") or []
+        remove = inputs.get("remove_labels") or []
+        if "INBOX" in [r.upper() for r in remove]:
+            changes.append("archive")
+        if "UNREAD" in [r.upper() for r in remove]:
+            changes.append("mark read")
+        if "UNREAD" in [a.upper() for a in add]:
+            changes.append("mark unread")
+        other_add = [a for a in add if a.upper() != "UNREAD"]
+        other_remove = [r for r in remove if r.upper() not in ("INBOX", "UNREAD")]
+        if other_add:
+            changes.append("add label " + ", ".join(other_add))
+        if other_remove:
+            changes.append("remove label " + ", ".join(other_remove))
+        return f"{' + '.join(changes) or 'relabel'} {n} email{'s' if n != 1 else ''}"
+    elif name == "email_trash":
+        n = len(inputs.get("message_ids", []))
+        return f"move {n} email{'s' if n != 1 else ''} to Trash"
+    elif name == "email_unsubscribe":
+        return "unsubscribe from this mailing list"
+    elif name in ("email_draft", "email_send"):
+        verb = "send" if name == "email_send" else "save a draft"
+        to = gmail.recipients_summary(inputs.get("to", ""), inputs.get("cc", ""))
+        target = f" to {to}" if to else (" replying to the thread" if inputs.get("reply_to_message_id") else "")
+        subject = inputs.get("subject", "")
+        head = f"{verb}{target}" + (f" — \"{subject}\"" if subject else "")
+        return f"{head}:\n\n{inputs.get('body', '')}"
     return name
 
 
@@ -711,7 +1017,9 @@ def summarize_tool_result(name: str, result) -> str:
     elif name == "read_url":
         return f"Read {len(result)} chars"
     elif name == "update_memory":
-        return "Memory updated"
+        return result
+    elif name == "delete_memory":
+        return result
     elif name == "restart_server":
         return "Restarting..."
     elif name == "update_scratchpad":
@@ -734,9 +1042,23 @@ def summarize_tool_result(name: str, result) -> str:
         return f"Found {len(lines)} elements"
     elif name == "browser_close":
         return result
+    elif name == "computer_click":
+        return result[:80]
+    elif name == "computer_type":
+        return result[:80]
     elif name == "close_connection":
         return "Connection closed"
+    elif name == "email_search":
+        return result.splitlines()[0][:80]
+    elif name == "email_read":
+        return "Read email"
+    elif name.startswith("email_"):
+        return result[:80]
     return "Done"
+
+
+def _email_fields(inputs: dict) -> dict:
+    return {k: inputs.get(k, "") for k in ("to", "cc", "subject", "body", "reply_to_message_id")}
 
 
 READ_LIMIT = 50_000
@@ -933,9 +1255,18 @@ def _delete_file(path: str) -> str:
     return f"Deleted {path}"
 
 
-def _update_memory(content: str) -> str:
-    MEMORY_PATH.write_text(content)
-    return f"Memory updated ({len(content)} bytes)"
+def _update_memory(name: str, type: str, description: str, content: str) -> str:
+    try:
+        memory_store.write_note(name, type, description, content)
+    except ValueError as e:
+        return f"Error: {e}"
+    return f"Memory note '{name}' updated ({len(content)} bytes)."
+
+
+def _delete_memory(name: str) -> str:
+    if memory_store.delete_note(name):
+        return f"Memory note '{name}' deleted."
+    return f"Error: no memory note named '{name}'."
 
 
 def _web_search(query: str) -> str:
@@ -983,6 +1314,16 @@ def _read_url(url: str) -> str:
     soup = BeautifulSoup(resp.text, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "noscript"]):
         tag.decompose()
+    # Keep each link's destination next to its text — otherwise "Download for
+    # ARM64" reaches Claude with no URL, and the only way to find it is to
+    # escalate to the browser.
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if href.startswith(("#", "javascript:", "mailto:")):
+            continue
+        absolute = urljoin(resp.url, href)
+        label = a.get_text(" ", strip=True)
+        a.replace_with(f"{label} ({absolute})" if label and label != absolute else absolute)
     text = soup.get_text(separator="\n")
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     cleaned = "\n".join(lines)

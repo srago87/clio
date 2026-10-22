@@ -14,8 +14,7 @@ interface Props {
   onSelect: (id: string | null) => void
 }
 
-/** Say-able tag shown beside an addressable block — same visual language as
- *  file-manager/components/FileView.tsx's Tag. */
+/** Say-able tag shown beside an addressable block. */
 function Tag({ n, active }: { n: number; active: boolean }): React.JSX.Element {
   return (
     <span

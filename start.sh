@@ -37,30 +37,55 @@ if [ ! -f ".venv/bin/activate" ]; then
 fi
 source .venv/bin/activate
 
-# ── Display (dev convenience) ─────────────────────────────────────────────────
-# Starts Clio's display GUI alongside the server so one command brings up both
-# while testing. This is backwards from the settled design — the display
-# is meant to launch this script, not the other way around (see the
-# project-clio memory) — but that lifecycle piece isn't
-# built yet, so this is the fast path until it is.
+# ── Display (opt-in) ──────────────────────────────────────────────────────────
+# The display GUI no longer opens automatically. Pass --display to start it
+# alongside the server (dev convenience), or open it yourself later with
+# `cd display && npm run dev`.
+
+OPEN_DISPLAY=false
+for arg in "$@"; do
+  [ "$arg" = "--display" ] && OPEN_DISPLAY=true
+done
 
 DISPLAY_LOG="$SCRIPT_DIR/display.log"
 
 # electron-vite dev spawns several child processes (renderer dev server,
 # main/preload watchers, the Electron binary itself) that don't all share
 # one simple PID to kill — match by command line instead so nothing is
-# left running after this script exits.
-kill_display() {
-  pkill -f "electron-vite" 2>/dev/null
-  pkill -f "$SCRIPT_DIR/display" 2>/dev/null
+# left running after this script exits. Only touches the display if this
+# script started it, so a manually opened display is left alone.
+cleanup() {
+  if $OPEN_DISPLAY; then
+    pkill -f "electron-vite" 2>/dev/null
+    pkill -f "$SCRIPT_DIR/display" 2>/dev/null
+  fi
+  pkill -f "ydotoold --socket-path=$YDOTOOL_SOCKET" 2>/dev/null
 }
-trap kill_display EXIT
+trap cleanup EXIT
 
-if [ -d "$SCRIPT_DIR/display/node_modules" ]; then
-  echo "Starting Clio's display (log: $DISPLAY_LOG)..."
-  (cd "$SCRIPT_DIR/display" && npm run dev) >"$DISPLAY_LOG" 2>&1 &
+if $OPEN_DISPLAY; then
+  if [ -d "$SCRIPT_DIR/display/node_modules" ]; then
+    echo "Starting Clio's display (log: $DISPLAY_LOG)..."
+    (cd "$SCRIPT_DIR/display" && npm run dev) >"$DISPLAY_LOG" 2>&1 &
+  else
+    echo "Note: display/node_modules not found — skipping the display (run 'npm install' in display/ first)."
+  fi
+fi
+
+# ── Input injection daemon (ydotool) ──────────────────────────────────────────
+# Backs computer_click/computer_type — real input injection via /dev/uinput,
+# which works under Wayland (unlike xdotool, X11-only via XTest). ydotoold
+# needs root to open /dev/uinput; --socket-own hands the socket itself to the
+# regular user so the server (running unprivileged) can still talk to it.
+YDOTOOL_SOCKET="$SCRIPT_DIR/server/tmp/ydotool.sock"
+mkdir -p "$SCRIPT_DIR/server/tmp"
+if command -v ydotoold &>/dev/null; then
+  rm -f "$YDOTOOL_SOCKET"
+  sudo nohup ydotoold --socket-path="$YDOTOOL_SOCKET" --socket-own="$(id -u):$(id -g)" \
+    >"$SCRIPT_DIR/ydotoold.log" 2>&1 &
+  disown
 else
-  echo "Note: display/node_modules not found — skipping the display (run 'npm install' in display/ first)."
+  echo "Note: ydotool not installed — computer_click/computer_type will be unavailable (run ./install.sh)."
 fi
 
 # ── Cloudflare Tunnel mode ────────────────────────────────────────────────────

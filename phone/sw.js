@@ -2,7 +2,7 @@
 // Licensed under the GNU Affero General Public License v3.0 or later.
 // See LICENSE in the project root, or <https://www.gnu.org/licenses/>.
 
-const CACHE_NAME = "clio-v11";
+const CACHE_NAME = "clio-v14";
 const STATIC_ASSETS = ["/", "/static/app.js", "/static/style.css", "/static/manifest.json"];
 
 self.addEventListener("install", (event) => {

@@ -24,7 +24,7 @@ The broader goal is a general-purpose ambient assistant — something reachable 
 - **Mic mute toggle** — tap the mic button to mute; the OS mic indicator light goes off and Clio stays quiet until you unmute
 - **Live status badge** — shows what Clio is doing with a label and elapsed timer (e.g. "read agent.py (3s)")
 - **Amplitude-driven glow** — the speaking glow pulses in real time with the audio amplitude during playback
-- **Persistent memory** — Clio maintains a memory file across sessions, automatically extracting and consolidating facts from each conversation, with compression when the file grows too large
+- **Persistent memory** — Clio maintains a vault of small typed notes across sessions (an Obsidian-compatible vault), automatically extracting and consolidating facts from each conversation into the right note, with per-note compression when one grows too large
 - **Customizable personality** — edit `soul.md` to change how Clio thinks and speaks
 - **PWA** — installable on your phone's home screen, works over your local network via Tailscale
 
@@ -117,11 +117,11 @@ curl -LO https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessa
 
 ```bash
 cp config.sh.example config.sh
-cp memory.example.md memory.md
+cp -r memory.example memory
 cp soul.example.md soul.md
 ```
 
-`memory.md` is Clio's persistent memory — it reads and updates this file itself across sessions. `soul.md` defines its personality and is loaded into the system prompt every turn. Both are yours to edit.
+`memory/` is Clio's persistent memory — a directory of small typed notes plus an index (`memory/MEMORY.md`), structured as an Obsidian vault (open the folder directly in Obsidian to browse, search, or hand-edit it). Clio reads and updates these notes itself across sessions. `soul.md` defines its personality and is loaded into the system prompt every turn. Both are yours to edit.
 
 Edit `config.sh` and set your networking option:
 
@@ -162,7 +162,9 @@ If you're using zsh, use `~/.zshrc` instead of `~/.bashrc`.
 
 The URL is printed to the terminal. If you configured ntfy.sh, it's also pushed to your phone. Open it in Safari (iOS) or Chrome (Android).
 
-To restart a running instance: `./restart.sh`
+To also open Clio's display (the Electron GUI) alongside the server: `./start.sh --display`. It no longer opens automatically; you can also start it on its own later with `cd display && npm run dev`.
+
+To restart a running instance: `./restart.sh` (accepts the same flags)
 
 ---
 
@@ -207,10 +209,10 @@ Tap again to unmute and resume.
 ### Personality (`soul.md`)
 Edit `soul.md` to change how Clio speaks and behaves. It's loaded into the system prompt every turn. The example file is a good starting point.
 
-### Memory (`memory.md`)
-Clio reads `memory.md` at the start of every turn and updates it via the `update_memory` tool. Edit it directly to give Clio context about you and your projects.
+### Memory (`memory/`)
+Clio's memory is a directory of small typed notes plus an index (`memory/MEMORY.md`), not one big file — structured as an Obsidian vault, so you can open the `memory/` folder directly in Obsidian to browse, search, and hand-edit it with backlinks and graph view. Each note has frontmatter (`name`, `type` — one of `user`/`feedback`/`project`/`reference` — `description`, `updated`) and a markdown body that can link other notes with `[[wikilinks]]`. Clio reads the whole vault at the start of every turn and updates one note at a time via `update_memory(name, type, description, content)` — every other note stays untouched. Use `delete_memory(name)` to remove a note that's gone stale.
 
-After each conversation turn, Clio autonomously extracts any facts worth keeping and appends them to memory. At the start of each session, it consolidates logs from previous sessions into memory and marks them processed. If the memory file grows beyond a configurable size limit (`MEMORY_SIZE_LIMIT` in `agent.py`), it compresses the file by summarizing it — discarding redundancy while keeping what matters. This happens automatically, both on session start and after explicit `update_memory` calls.
+After each conversation turn, Clio autonomously extracts any facts worth keeping, decides which note(s) they belong to (reusing an existing note where one fits), and merges them in. At the start of each session, it consolidates logs from previous sessions the same way. If an individual note grows beyond a configurable size limit (`NOTE_SIZE_LIMIT` in `server/memory_store.py`), Clio compresses that one note by summarizing it — the rest of the vault is unaffected. This happens automatically, both from background extraction and after explicit `update_memory` calls.
 
 ### Your name (`USER_NAME`)
 Set `USER_NAME` in `config.sh` to have Clio address you by name. The installer prompts for this. You can also set it later by editing `config.sh` directly.
@@ -235,7 +237,8 @@ Tools are defined in `server/tools.py`. Add new tools by:
 | `web_search` | Auto | DuckDuckGo search |
 | `read_url` | Auto | Fetch and extract text from a URL |
 | `get_current_time` | Auto | Current date and time |
-| `update_memory` | Auto | Overwrite `memory.md` |
+| `update_memory` | Auto | Save or update one memory note |
+| `delete_memory` | Auto | Delete a stale memory note |
 | `update_scratchpad` | Auto | Update session working notes |
 | `restart_server` | Ask | Restart the Clio process |
 | `close_connection` | Auto | Drop the WebSocket so the client reconnects |
@@ -247,6 +250,7 @@ Tools are defined in `server/tools.py`. Add new tools by:
 | `browser_screenshot` | Auto | Take a screenshot and analyze it visually |
 | `browser_get_content` | Auto | Get readable text content of the current page |
 | `browser_get_elements` | Auto | List interactive elements on the current page |
+| `computer_screenshot` | Auto | Screenshot the real desktop (non-browser apps) |
 | `write_file` | Phone approval | Create or overwrite a file |
 | `edit_file` | Phone approval | Replace a string in a file |
 | `bash_command` | Phone approval | Run a shell command |
@@ -255,6 +259,8 @@ Tools are defined in `server/tools.py`. Add new tools by:
 | `browser_click` | Phone approval | Click an element on the current page |
 | `browser_type` | Phone approval | Type into an input field |
 | `browser_close` | Phone approval | Close the browser session |
+| `computer_click` | Phone approval | Click a pixel coordinate on the real desktop |
+| `computer_type` | Phone approval | Type into whatever's focused on the real desktop |
 
 ---
 
@@ -283,7 +289,7 @@ clio/
 │   ├── icon-512.png
 │   └── sw.js           # Service worker
 ├── soul.example.md     # Clio's personality — copy to soul.md and customize
-├── memory.example.md   # Clio's memory template — copy to memory.md
+├── memory.example/     # Clio's memory vault template — copy to memory/
 ├── config.sh.example   # Config template — copy to config.sh and fill in
 ├── start.sh            # Start the server
 ├── restart.sh          # Restart a running instance
