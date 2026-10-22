@@ -6,6 +6,7 @@ import glob as glob_module
 import ipaddress
 import os
 import subprocess
+import threading
 import time
 import urllib.parse
 import requests
@@ -202,7 +203,14 @@ ALL_TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "The shell command to run."},
-                "cwd": {"type": "string", "description": "Working directory. Defaults to ~/claude."},
+                "cwd": {
+                    "type": "string",
+                    "description": (
+                        "Working directory for this command. If omitted, it runs wherever "
+                        "the shared terminal currently is — a prior cd (yours or the "
+                        "human's, typed in the terminal pane) persists across calls."
+                    ),
+                },
             },
             "required": ["command"],
         },
@@ -1147,13 +1155,30 @@ def _find_files(pattern: str, path: str = "") -> str:
     return "\n".join(sorted(filtered)[:500])
 
 
+# Guards write_file/edit_file's read-modify-write against each other — the
+# terminal pane means a human can now hold the same file open at the same
+# time (vim/nano/shell redirection), which this can't do anything about
+# (an external editor doesn't participate in a Python lock), but it at least
+# stops two concurrent Clio-side calls from clobbering each other, and the
+# mtime check below turns an external writer landing mid-call into a
+# reported error instead of a silent clobber.
+_file_write_lock = threading.Lock()
+
+
 def _write_file(path: str, content: str) -> dict:
     p = Path(path).expanduser()
     if not _is_safe_path(p):
         return {"_diff": False, "text": f"Error: access to {path} is not allowed"}
-    old_content = p.read_text() if p.exists() else ""
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content)
+    with _file_write_lock:
+        old_content = p.read_text() if p.exists() else ""
+        mtime_before = p.stat().st_mtime_ns if p.exists() else None
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if mtime_before is not None and (not p.exists() or p.stat().st_mtime_ns != mtime_before):
+            return {
+                "_diff": False,
+                "text": f"Error: {path} changed on disk while writing — read it again and retry.",
+            }
+        p.write_text(content)
     return {
         "_diff": True,
         "path": str(p),
@@ -1167,45 +1192,54 @@ def _edit_file(path: str, old_string: str, new_string: str) -> dict:
     p = Path(path).expanduser()
     if not _is_safe_path(p):
         return {"_diff": False, "text": f"Error: access to {path} is not allowed"}
-    content = p.read_text()
+    with _file_write_lock:
+        content = p.read_text()
+        mtime_before = p.stat().st_mtime_ns
 
-    # Exact match
-    if old_string in content:
-        new_content = content.replace(old_string, new_string, 1)
-        p.write_text(new_content)
-        return {"_diff": True, "path": str(p), "old": content, "new": new_content, "text": f"Replaced in {path}"}
-
-    # Fuzzy: normalize trailing whitespace per line and retry
-    content_lines = content.splitlines(keepends=True)
-    old_lines = old_string.splitlines()
-    if not old_lines:
-        return {"_diff": False, "text": "Error: old_string is empty"}
-
-    n = len(old_lines)
-    norm_old = [line.rstrip() for line in old_lines]
-
-    for i in range(len(content_lines) - n + 1):
-        block = content_lines[i:i + n]
-        norm_block = [line.rstrip("\n").rstrip("\r").rstrip() for line in block]
-        if norm_block == norm_old:
-            before = "".join(content_lines[:i])
-            after = "".join(content_lines[i + n:])
-            new_content = before + new_string + after
+        def _write_if_unchanged(new_content: str) -> dict | None:
+            if p.stat().st_mtime_ns != mtime_before:
+                return {
+                    "_diff": False,
+                    "text": f"Error: {path} changed on disk while editing — read it again and retry.",
+                }
             p.write_text(new_content)
             return {"_diff": True, "path": str(p), "old": content, "new": new_content, "text": f"Replaced in {path}"}
 
-    # Helpful error indicating whether the first line exists at all
-    first_line = old_lines[0].strip()
-    for line in content.splitlines():
-        if first_line and first_line in line:
-            return {
-                "_diff": False,
-                "text": (
-                    f"Error: string not found in {path} — the first line was found but "
-                    f"surrounding context didn't match. Read the file and use the exact text."
-                ),
-            }
-    return {"_diff": False, "text": f"Error: string not found in {path} — read the file first to get the exact text"}
+        # Exact match
+        if old_string in content:
+            new_content = content.replace(old_string, new_string, 1)
+            return _write_if_unchanged(new_content)
+
+        # Fuzzy: normalize trailing whitespace per line and retry
+        content_lines = content.splitlines(keepends=True)
+        old_lines = old_string.splitlines()
+        if not old_lines:
+            return {"_diff": False, "text": "Error: old_string is empty"}
+
+        n = len(old_lines)
+        norm_old = [line.rstrip() for line in old_lines]
+
+        for i in range(len(content_lines) - n + 1):
+            block = content_lines[i:i + n]
+            norm_block = [line.rstrip("\n").rstrip("\r").rstrip() for line in block]
+            if norm_block == norm_old:
+                before = "".join(content_lines[:i])
+                after = "".join(content_lines[i + n:])
+                new_content = before + new_string + after
+                return _write_if_unchanged(new_content)
+
+        # Helpful error indicating whether the first line exists at all
+        first_line = old_lines[0].strip()
+        for line in content.splitlines():
+            if first_line and first_line in line:
+                return {
+                    "_diff": False,
+                    "text": (
+                        f"Error: string not found in {path} — the first line was found but "
+                        f"surrounding context didn't match. Read the file and use the exact text."
+                    ),
+                }
+        return {"_diff": False, "text": f"Error: string not found in {path} — read the file first to get the exact text"}
 
 
 def _run_background(command: str, cwd: str | None = None) -> str:

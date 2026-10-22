@@ -26,6 +26,11 @@ from .tts import synthesize, TTS_ENGINE, MODELS_DIR, PIPER_MODEL_NAME
 
 SESSION_TOKEN = secrets.token_hex(16)
 
+# The port server/serve.py always binds its local-only, same-machine listener
+# to (see its docstring) — single source of truth, imported back by serve.py,
+# so the two never drift apart.
+LOCAL_ONLY_PORT = 8766
+
 # How long Clio must have been quiet before it speaks up unprompted about a
 # finished delegation — keeps it from talking over the start of a reply.
 PROACTIVE_IDLE_SECONDS = 3.0
@@ -84,8 +89,12 @@ class DisplayLink:
         self._ws = websocket
 
     def disconnect(self, websocket: WebSocket):
-        if self._ws is websocket:
-            self._ws = None
+        if self._ws is not websocket:
+            # A newer socket already replaced this one (reconnect race) —
+            # the pending requests belong to that new connection, not this
+            # stale one, so leave them alone.
+            return
+        self._ws = None
         for fut in self._pending.values():
             if not fut.done():
                 fut.set_exception(RuntimeError("document viewer disconnected"))
@@ -262,6 +271,20 @@ async def display_websocket_endpoint(websocket: WebSocket):
 async def terminal_websocket_endpoint(websocket: WebSocket):
     token = websocket.query_params.get("token", "")
     if token != SESSION_TOKEN:
+        await websocket.close(code=4403)
+        return
+    # Driving the shared shell as a human is raw, unrestricted, unapproved
+    # command execution — unlike bash_command (Clio's own path), which is
+    # always gated behind phone approval. SESSION_TOKEN alone isn't enough
+    # to guard that: it's embedded in the phone HTML served out over the
+    # public/Tailscale listener, so anyone who obtains it could otherwise
+    # open this socket directly and bypass the approval gate entirely. The
+    # display is the only legitimate client of /ws/terminal and it always
+    # reaches the server over the local-only listener (server/serve.py) —
+    # reject any connection that didn't arrive on that listener, even with
+    # a valid token.
+    server_port = (websocket.scope.get("server") or (None, None))[1]
+    if server_port != LOCAL_ONLY_PORT:
         await websocket.close(code=4403)
         return
     await websocket.accept()

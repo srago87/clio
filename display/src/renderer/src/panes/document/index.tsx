@@ -80,8 +80,11 @@ function useDocument(): PaneHandle {
         describe: 'select a block by tag number or matching text',
         params: ['target'],
         run: (args) => {
-          const hits = matchBlocks(String(args.target ?? ''), state.blocks)
-          if (hits.length === 1) selectBlock(hits[0].id)
+          const target = String(args.target ?? '')
+          const hits = matchBlocks(target, state.blocks)
+          if (hits.length === 0) throw new Error(`No block matches "${target}"`)
+          if (hits.length > 1) throw new Error(`"${target}" matches ${hits.length} blocks — be more specific`)
+          selectBlock(hits[0].id)
         }
       }
     ],
